@@ -43,7 +43,7 @@ function boot() {
     ui.toast('A apărut o eroare — reîncarcă dacă ceva pare blocat.');
   });
 
-  Logger.info('NOVA ARENA v0.1 pornit');
+  Logger.info('STARFORGE v0.2.1 pornit');
 
   // PWA: service worker doar pe http(s) — nu și în WebView-ul Capacitor
   try {

@@ -194,7 +194,7 @@ function teamFor(room: Room): number {
 }
 
 const wss = new WebSocketServer({ port: PORT });
-console.log(`[nova-server] ascult pe :${PORT}`);
+console.log(`[starforge-server] ascult pe :${PORT}`);
 
 wss.on('connection', (ws: WebSocket) => {
   let room: Room | null = null;

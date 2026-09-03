@@ -1,6 +1,6 @@
 // Service Worker Nova Arena — app-shell cache-first, versionat.
 // NU intercepta pe scheme non-http (ex. Capacitor).
-const VERSION = 'nova-arena-v0.1.0';
+const VERSION = 'starforge-v0.2.1';
 const CORE = ['./', './index.html', './manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {

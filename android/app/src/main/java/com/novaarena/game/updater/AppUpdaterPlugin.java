@@ -32,7 +32,7 @@ import java.io.File;
 @CapacitorPlugin(name = "AppUpdater")
 public class AppUpdaterPlugin extends Plugin {
 
-    private static final String FILE_NAME = "nova-arena-update.apk";
+    private static final String FILE_NAME = "starforge-update.apk";
     private long downloadId = -1;
     private BroadcastReceiver receiver = null;
 
@@ -100,8 +100,8 @@ public class AppUpdaterPlugin extends Plugin {
                 out.delete();
             }
             DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
-            req.setTitle("Nova Arena — se descarcă actualizarea");
-            req.setDescription("Nova Arena " + url.substring(url.lastIndexOf('/') + 1));
+            req.setTitle("Starforge — se descarcă actualizarea");
+            req.setDescription("Starforge " + url.substring(url.lastIndexOf('/') + 1));
             req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             req.setDestinationUri(Uri.fromFile(out));
             req.setMimeType("application/vnd.android.package-archive");

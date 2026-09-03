@@ -1,4 +1,4 @@
-# NOVA ARENA — hero brawler mobil original
+# STARFORGE — hero brawler mobil original
 
 Joc original inspirat ca **experiență/structură** din hero brawlerele de tip Brawl Stars,
 dar cu personaje, hărți, UI, sunete și lore 100% originale. Three.js + TypeScript +

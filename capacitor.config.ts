@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.novaarena.game',
-  appName: 'Nova Arena',
+  appName: 'Starforge',
   webDir: 'dist',
   backgroundColor: '#0b0e1d',
   android: {

@@ -1,7 +1,7 @@
 {
-  "name": "nova-arena",
-  "version": "0.2.0",
-  "description": "NOVA ARENA — hero brawler multiplayer mobil original (Three.js + TS + Capacitor)",
+  "name": "starforge",
+  "version": "0.2.1",
+  "description": "STARFORGE — hero brawler multiplayer mobil original (Three.js + TS + Capacitor)",
   "type": "module",
   "scripts": {
     "dev": "vite --host --port 5173",

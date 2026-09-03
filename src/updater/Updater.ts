@@ -56,7 +56,7 @@ export async function checkForUpdate(): Promise<{ update: boolean; info: UpdateI
 export async function installUpdate(info: UpdateInfo): Promise<'native' | 'browser'> {
   if (Capacitor.isNativePlatform()) {
     try {
-      await AppUpdater.downloadAndInstall({ url: info.apkUrl, title: 'Nova Arena' });
+      await AppUpdater.downloadAndInstall({ url: info.apkUrl, title: 'Starforge' });
       return 'native';
     } catch {
       // cade pe deschiderea în browser
