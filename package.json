@@ -1,0 +1,28 @@
+{
+  "name": "nova-arena",
+  "version": "0.1.0",
+  "description": "NOVA ARENA — hero brawler multiplayer mobil original (Three.js + TS + Capacitor)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host --port 5173",
+    "dev:server": "npm --prefix server run dev",
+    "dev:all": "concurrently \"npm run dev\" \"npm run dev:server\"",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host --port 4173",
+    "cap:sync": "npx cap sync",
+    "cap:android": "npx cap open android",
+    "test:build": "npm run build && node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^6.1.4",
+    "@capacitor/cli": "^6.1.4",
+    "@capacitor/core": "^6.1.4",
+    "@types/three": "^0.185.4",
+    "concurrently": "^9.0.1",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.3"
+  }
+}

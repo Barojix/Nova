@@ -1,0 +1,187 @@
+import * as THREE from 'three';
+import type { MapDef } from '../data/maps';
+import { settings } from '../settings/Settings';
+
+export interface BuiltMap {
+  group: THREE.Group;
+  walls: { minX: number; maxX: number; minZ: number; maxZ: number }[];
+  bushes: { x: number; z: number; r: number }[];
+  half: number;
+  dispose: () => void;
+}
+
+// Verificare coliziune cerc vs AABB ziduri.
+export function collideWalls(
+  walls: BuiltMap['walls'], x: number, z: number, r: number
+): { x: number; z: number } {
+  let nx = x, nz = z;
+  for (const w of walls) {
+    const cx = Math.max(w.minX, Math.min(nx, w.maxX));
+    const cz = Math.max(w.minZ, Math.min(nz, w.maxZ));
+    const dx = nx - cx, dz = nz - cz;
+    const d = Math.hypot(dx, dz);
+    if (d < r) {
+      if (d > 0.0001) {
+        nx = cx + (dx / d) * r;
+        nz = cz + (dz / d) * r;
+      } else {
+        // centru înăuntru — împinge pe axa cea mai apropiată
+        const pushL = nx - w.minX, pushR = w.maxX - nx;
+        const pushU = nz - w.minZ, pushD = w.maxZ - nz;
+        const m = Math.min(pushL, pushR, pushU, pushD);
+        if (m === pushL) nx = w.minX - r;
+        else if (m === pushR) nx = w.maxX + r;
+        else if (m === pushU) nz = w.minZ - r;
+        else nz = w.maxZ + r;
+      }
+    }
+  }
+  return { x: nx, z: nz };
+}
+
+export function inBush(bushes: BuiltMap['bushes'], x: number, z: number): boolean {
+  for (const b of bushes) {
+    if (Math.hypot(x - b.x, z - b.z) < b.r) return true;
+  }
+  return false;
+}
+
+/** Linie de vedere blocată de ziduri? (segment vs AABB, sampling ieftin) */
+export function losBlocked(walls: BuiltMap['walls'], ax: number, az: number, bx: number, bz: number): boolean {
+  const steps = Math.ceil(Math.hypot(bx - ax, bz - az) / 0.5);
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    const x = ax + (bx - ax) * t;
+    const z = az + (bz - az) * t;
+    for (const w of walls) {
+      if (x > w.minX && x < w.maxX && z > w.minZ && z < w.maxZ) return true;
+    }
+  }
+  return false;
+}
+
+export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
+  const group = new THREE.Group();
+  const half = def.size / 2;
+  const disposables: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[] = [];
+
+  // sol — canvas texture procedurală (nisip/cristal original)
+  const cnv = document.createElement('canvas');
+  cnv.width = 256; cnv.height = 256;
+  const g2 = cnv.getContext('2d')!;
+  g2.fillStyle = '#1b2140';
+  g2.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 900; i++) {
+    g2.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.08)';
+    g2.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
+  }
+  g2.strokeStyle = 'rgba(122,240,255,0.10)';
+  g2.lineWidth = 2;
+  for (let i = 0; i <= 4; i++) {
+    g2.beginPath(); g2.moveTo((i * 256) / 4, 0); g2.lineTo((i * 256) / 4, 256); g2.stroke();
+    g2.beginPath(); g2.moveTo(0, (i * 256) / 4); g2.lineTo(256, (i * 256) / 4); g2.stroke();
+  }
+  const tex = new THREE.CanvasTexture(cnv);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(def.size / 8, def.size / 8);
+  disposables.push(tex);
+
+  const groundMat = new THREE.MeshLambertMaterial({ map: tex });
+  disposables.push(groundMat);
+  const groundGeo = new THREE.PlaneGeometry(def.size + 6, def.size + 6);
+  disposables.push(groundGeo);
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = settings.shadows;
+  group.add(ground);
+
+  // margine neon
+  const edgeMat = new THREE.MeshBasicMaterial({ color: 0x7af0ff });
+  disposables.push(edgeMat);
+  const edgeGeo = new THREE.BoxGeometry(def.size + 1.2, 0.5, 0.4);
+  disposables.push(edgeGeo);
+  for (const [x, z, w, d] of [
+    [0, -half - 0.4, def.size + 1.2, 0.4],
+    [0, half + 0.4, def.size + 1.2, 0.4],
+    [-half - 0.4, 0, 0.4, def.size + 1.2],
+    [half + 0.4, 0, 0.4, def.size + 1.2],
+  ]) {
+    const e = new THREE.Mesh(edgeGeo, edgeMat);
+    e.scale.set(w / (def.size + 1.2), 1, d / 0.4);
+    e.position.set(x, 0.25, z);
+    group.add(e);
+  }
+
+  // ziduri — blocuri cristal albastru-violet
+  const wallMat = new THREE.MeshLambertMaterial({ color: 0x3a4a8c });
+  const wallTopMat = new THREE.MeshLambertMaterial({ color: 0x5a70d8 });
+  disposables.push(wallMat, wallTopMat);
+  const walls: BuiltMap['walls'] = [];
+  for (const w of def.walls) {
+    const h = 1.6;
+    const geo = new THREE.BoxGeometry(w.w, h, w.d);
+    disposables.push(geo);
+    const m = new THREE.Mesh(geo, wallMat);
+    m.position.set(w.x, h / 2, w.z);
+    m.castShadow = settings.shadows;
+    group.add(m);
+    const topGeo = new THREE.BoxGeometry(w.w + 0.15, 0.18, w.d + 0.15);
+    disposables.push(topGeo);
+    const top = new THREE.Mesh(topGeo, wallTopMat);
+    top.position.set(w.x, h + 0.09, w.z);
+    group.add(top);
+    walls.push({
+      minX: w.x - w.w / 2, maxX: w.x + w.w / 2,
+      minZ: w.z - w.d / 2, maxZ: w.z + w.d / 2,
+    });
+  }
+
+  // tufișuri — semi-transparente (ascund eroii inamici)
+  const bushMat = new THREE.MeshLambertMaterial({
+    color: 0x2fae5f, transparent: true, opacity: 0.75,
+  });
+  disposables.push(bushMat);
+  const bushes = def.bushes.map((b) => ({ ...b }));
+  for (const b of def.bushes) {
+    const geo = new THREE.CircleGeometry(b.r, 20);
+    disposables.push(geo);
+    const m = new THREE.Mesh(geo, bushMat);
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(b.x, 0.05, b.z);
+    group.add(m);
+    // margine mai închisă
+    const ringGeo = new THREE.RingGeometry(b.r - 0.25, b.r, 20);
+    disposables.push(ringGeo);
+    const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0x1e7a40 }));
+    disposables.push(ring.material as THREE.Material);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(b.x, 0.06, b.z);
+    group.add(ring);
+  }
+
+  // lumini
+  const hemi = new THREE.HemisphereLight(0xbcd2ff, 0x1a1430, 1.05);
+  group.add(hemi);
+  const dir = new THREE.DirectionalLight(0xfff2d9, settings.shadows ? 1.1 : 0.9);
+  dir.position.set(12, 20, 8);
+  if (settings.shadows) {
+    dir.castShadow = true;
+    dir.shadow.mapSize.set(1024, 1024);
+    dir.shadow.camera.left = -20; dir.shadow.camera.right = 20;
+    dir.shadow.camera.top = 20; dir.shadow.camera.bottom = -20;
+  }
+  group.add(dir);
+
+  // ceață subtilă pentru adâncime
+  scene.fog = new THREE.Fog(0x0b0e1d, 38, 70);
+
+  scene.add(group);
+  return {
+    group, walls, bushes, half,
+    dispose() {
+      scene.remove(group);
+      scene.fog = null;
+      disposables.forEach((d) => d.dispose());
+    },
+  };
+}

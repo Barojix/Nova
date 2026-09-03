@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "outDir": "dist",
+    "rootDir": "..",
+    "allowImportingTsExtensions": false
+  },
+  "include": [
+    "src/**/*.ts",
+    "../src/game/Match.ts",
+    "../src/data/heroes.ts",
+    "../src/data/maps.ts",
+    "../src/data/economy.ts",
+    "../src/utils/math.ts",
+    "../src/networking/protocol.ts"
+  ]
+}
