@@ -1,0 +1,24 @@
+{
+  "name": "Nova Arena — Hero Brawler",
+  "short_name": "Nova Arena",
+  "description": "Hero brawler multiplayer original: 3v3, Showdown, eroi unici.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0b0e1d",
+  "theme_color": "#0b0e1d",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

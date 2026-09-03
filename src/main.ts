@@ -44,6 +44,15 @@ function boot() {
   });
 
   Logger.info('NOVA ARENA v0.1 pornit');
+
+  // PWA: service worker doar pe http(s) — nu și în WebView-ul Capacitor
+  try {
+    if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      });
+    }
+  } catch { /* SW opțional */ }
 }
 
 if (document.readyState === 'loading') {
