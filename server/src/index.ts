@@ -7,6 +7,7 @@ import { mapById } from '../../src/data/maps.js';
 import { heroById } from '../../src/data/heroes.js';
 import { uid } from '../../src/utils/math.js';
 import { MATCH_REWARDS } from '../../src/data/economy.js';
+import { store, toPublic } from './store.js';
 import type { ClientMsg, ServerMsg } from '../../src/networking/protocol.js';
 
 const PORT = Number(process.env.PORT ?? 2567);
@@ -23,6 +24,7 @@ interface Player {
   ws: WebSocket;
   fighterId: number;
   name: string;
+  accountId?: string;
   input: SimInput;
   lastInputAt: number;
   lastAttackAt: number;
@@ -39,6 +41,7 @@ interface Room {
 }
 
 const rooms = new Map<string, Room>();
+const authHits = new Map<string, number[]>();
 let roomSeq = 1;
 
 const BOT_NAMES = ['Rook', 'Zed', 'Pip', 'Kira', 'Jax', 'Luma', 'Onyx', 'Fizz'];
@@ -196,9 +199,20 @@ function teamFor(room: Room): number {
 const wss = new WebSocketServer({ port: PORT });
 console.log(`[starforge-server] ascult pe :${PORT}`);
 
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', (ws: WebSocket, req) => {
   let room: Room | null = null;
   let player: Player | null = null;
+  let connToken = '';
+  const ip = req?.socket?.remoteAddress ?? 'unknown';
+
+  const authAllowed = (): boolean => {
+    const now = Date.now();
+    const arr = (authHits.get(ip) ?? []).filter((t) => now - t < 60000);
+    if (arr.length >= 10) return false;
+    arr.push(now);
+    authHits.set(ip, arr);
+    return true;
+  };
 
   ws.on('message', (raw) => {
     let msg: ClientMsg;
@@ -213,7 +227,10 @@ wss.on('connection', (ws: WebSocket) => {
       room = findOrCreateRoom(modeId, msg.room);
       const m = room.match;
       const heroId = ['volt', 'moss', 'blip'].includes(msg.heroId) ? msg.heroId : 'volt';
-      const name = String(msg.name ?? 'Erou').slice(0, 14) || 'Erou';
+      // cont autentificat? numele și economia vin de la server, nu de la client.
+      const account = msg.token ? store.refresh(msg.token) : null;
+      if (account) connToken = account.token;
+      const name = account ? account.name : String(msg.name ?? 'Erou').slice(0, 14) || 'Erou';
       const team = teamFor(room);
       // spawn simplu pe jumătatea echipei
       const sp = team === 0 ? { x: -13, z: 0 } : { x: 13, z: 0 };
@@ -249,6 +266,7 @@ wss.on('connection', (ws: WebSocket) => {
       }
       player = {
         ws, fighterId: f.id, name,
+        accountId: account?.id,
         input: { mx: 0, mz: 0, ax: 1, az: 0, attack: false, super: false },
         lastInputAt: Date.now(), lastAttackAt: 0,
       };
@@ -261,8 +279,35 @@ wss.on('connection', (ws: WebSocket) => {
         m.fighters = m.fighters.filter((x) => x.id !== drop.id);
         console.log(`[room] ${room.code}: bot ${drop.name} înlocuit de ${name}`);
       }
-      send(ws, { t: 'welcome', id: f.id, room: room.code, online: true });
+      send(ws, {
+        t: 'welcome', id: f.id, room: room.code, online: true,
+        profile: account ? toPublic(account) : undefined,
+      });
       console.log(`[join] ${name} -> ${room.code} (${room.players.length} umani)`);
+      return;
+    }
+    if (msg.t === 'register' || msg.t === 'login' || msg.t === 'refresh') {
+      if (!authAllowed()) {
+        send(ws, { t: 'auth-error', msg: 'Prea multe încercări. Așteaptă un minut.' });
+        return;
+      }
+      if (msg.t === 'refresh') {
+        const a = store.refresh(msg.token);
+        if (a) send(ws, { t: 'auth-ok', token: a.token, profile: toPublic(a) });
+        else send(ws, { t: 'auth-error', msg: 'Sesiune expirată. Conectează-te din nou.' });
+        return;
+      }
+      const r = msg.t === 'register' ? store.register(msg.name, msg.pass) : store.login(msg.name, msg.pass);
+      if (r.ok && r.account) {
+        send(ws, { t: 'auth-ok', token: r.account.token, profile: toPublic(r.account) });
+      } else {
+        send(ws, { t: 'auth-error', msg: r.msg ?? 'Eroare autentificare.' });
+      }
+      return;
+    }
+    if (msg.t === 'profile') {
+      const a = store.refresh(connToken);
+      if (a) send(ws, { t: 'profile', profile: toPublic(a) });
       return;
     }
     if (msg.t === 'input' && room && player) {
@@ -320,16 +365,27 @@ setInterval(() => {
     if (m.over) {
       if (!room.endedAt) {
         room.endedAt = now;
-        // recompense validate de server
+        // recompense validate + persistate server-side pentru conturi
         for (const p of room.players) {
           const f = m.fighters.find((x) => x.id === p.fighterId);
           const won = f ? f.team === m.winner : false;
-          send(p.ws, {
-            t: 'reward',
-            coins: won ? MATCH_REWARDS.winCoins : MATCH_REWARDS.loseCoins,
-            xp: won ? MATCH_REWARDS.winXp : MATCH_REWARDS.loseXp,
-            trophies: won ? MATCH_REWARDS.trophyWin : MATCH_REWARDS.trophyLose,
-          });
+          if (p.accountId) {
+            const profile = store.applyMatchById(p.accountId, won, f?.kills ?? 0);
+            send(p.ws, {
+              t: 'reward',
+              coins: won ? MATCH_REWARDS.winCoins : MATCH_REWARDS.loseCoins,
+              xp: won ? MATCH_REWARDS.winXp : MATCH_REWARDS.loseXp,
+              trophies: won ? MATCH_REWARDS.trophyWin : MATCH_REWARDS.trophyLose,
+              profile: profile ?? undefined,
+            });
+          } else {
+            send(p.ws, {
+              t: 'reward',
+              coins: won ? MATCH_REWARDS.winCoins : MATCH_REWARDS.loseCoins,
+              xp: won ? MATCH_REWARDS.winXp : MATCH_REWARDS.loseXp,
+              trophies: won ? MATCH_REWARDS.trophyWin : MATCH_REWARDS.trophyLose,
+            });
+          }
         }
       }
       continue;
