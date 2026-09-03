@@ -4,7 +4,7 @@ import { UI } from './ui/UI';
 import { audio } from './audio/Audio';
 import { Logger } from './core/Logger';
 
-function boot() {
+async function boot() {
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
   const uiRoot = document.getElementById('ui-root')!;
   const touchRoot = document.getElementById('touch-root')!;
@@ -44,6 +44,15 @@ function boot() {
   });
 
   Logger.info('STARFORGE v0.2.1 pornit');
+
+  // blocare landscape pe nativ (ca hero brawlerele mobile)
+  try {
+    const { Capacitor } = await import('@capacitor/core');
+    if (Capacitor.isNativePlatform()) {
+      const { ScreenOrientation } = await import('@capacitor/screen-orientation');
+      await ScreenOrientation.lock({ orientation: 'landscape' });
+    }
+  } catch { /* web/PWA se bazează pe manifest + overlay portrait */ }
 
   // PWA: service worker doar pe http(s) — nu și în WebView-ul Capacitor
   try {

@@ -5,6 +5,7 @@ import { save } from '../save/SaveSystem';
 import { settings } from '../settings/Settings';
 import { Shop } from '../shop/Shop';
 import { Progression } from '../progression/Progression';
+import { Auth } from '../auth/Auth';
 import { audio } from '../audio/Audio';
 import { perf } from '../core/Perf';
 import { APP_VERSION } from '../core/Version';
@@ -24,7 +25,18 @@ export class UI implements IGameUI {
     this.playerName =
       localStorage.getItem('nova-name') || `Erou#${Math.floor(1000 + Math.random() * 9000)}`;
     localStorage.setItem('nova-name', this.playerName);
-    this.renderMenu();
+    if (Auth.token && !Auth.offlineMode) {
+      this.renderMenu();
+      // revalidare silențioasă — token expirat => ecran de cont
+      void Auth.refresh().then((ok) => {
+        if (!ok) this.showAuth('Sesiunea a expirat. Conectează-te din nou.');
+        else this.renderMenu();
+      });
+    } else if (Auth.offlineMode) {
+      this.renderMenu();
+    } else {
+      this.showAuth();
+    }
     Progression.claimDaily();
     this.loopPerf();
   }
@@ -35,24 +47,93 @@ export class UI implements IGameUI {
     this.renderMenu();
   }
 
+  // ---------- CONT (login / register) ----------
+
+  private authTab: 'login' | 'register' = 'login';
+
+  private showAuth(notice?: string) {
+    this.root.innerHTML = `
+    <div class="screen" id="scr-auth">
+      <div class="auth-wrap">
+        <div class="auth-logo">⚡</div>
+        <h1 class="auth-title">STARFORGE</h1>
+        <div class="auth-sub">Contul tău păstrează trofee, monezi și progres pe orice device.</div>
+        ${notice ? `<div class="auth-err">${notice}</div>` : ''}
+        <div class="seg" id="auth-tabs">
+          <button data-at="login" class="${this.authTab === 'login' ? 'sel' : ''}">Conectare</button>
+          <button data-at="register" class="${this.authTab === 'register' ? 'sel' : ''}">Cont nou</button>
+        </div>
+        <input class="ainput" id="auth-name" maxlength="14" placeholder="Nume luptător (3-14, litere/cifre/_)" autocomplete="username" />
+        <input class="ainput" id="auth-pass" type="password" maxlength="64" placeholder="Parolă (minim 4 caractere)" autocomplete="current-password" />
+        <div class="auth-err hidden" id="auth-err"></div>
+        <button class="btn-play" id="auth-go">${this.authTab === 'login' ? 'INTRĂ ÎN JOC' : 'CREEAZĂ CONT'}</button>
+        <button class="mbtn ghost" id="auth-offline" style="width:100%;margin-top:10px">Joacă offline, fără cont</button>
+      </div>
+    </div>
+    <div id="hud"></div><div id="toast"></div><div id="perf"></div>`;
+    this.root.querySelectorAll('#auth-tabs button').forEach((b) => {
+      b.addEventListener('click', () => {
+        this.authTab = (b as HTMLElement).dataset.at as 'login' | 'register';
+        audio.sfx('click');
+        this.showAuth();
+      });
+    });
+    const go = async () => {
+      const name = (this.root.querySelector('#auth-name') as HTMLInputElement).value.trim();
+      const pass = (this.root.querySelector('#auth-pass') as HTMLInputElement).value;
+      const err = this.root.querySelector('#auth-err') as HTMLElement;
+      const btn = this.root.querySelector('#auth-go') as HTMLButtonElement;
+      err.classList.add('hidden');
+      btn.disabled = true;
+      btn.textContent = '⏳…';
+      try {
+        if (this.authTab === 'register') await Auth.register(name, pass);
+        else await Auth.login(name, pass);
+        audio.sfx('coin');
+        this.renderMenu();
+      } catch (e) {
+        err.textContent = (e as Error).message;
+        err.classList.remove('hidden');
+        audio.sfx('hurt');
+        btn.disabled = false;
+        btn.textContent = this.authTab === 'login' ? 'INTRĂ ÎN JOC' : 'CREEAZĂ CONT';
+      }
+    };
+    this.root.querySelector('#auth-go')?.addEventListener('click', () => void go());
+    this.root.querySelector('#auth-offline')?.addEventListener('click', () => {
+      audio.sfx('click');
+      Auth.goOffline();
+      this.renderMenu();
+    });
+  }
+
   // ---------- MENIU ----------
 
   private renderMenu() {
     const d = save.data;
     const hero = HEROES.find((h) => h.id === d.selectedHero) ?? HEROES[0];
     const need = 100 + d.level * 60 - 60;
+    // cont logat? profilul server e sursa de adevăr pentru economie.
+    const prof = Auth.loggedIn ? Auth.profile : null;
+    const dispName = Auth.displayName(this.playerName);
+    const lvl = prof?.level ?? d.level;
+    const xp = prof?.xp ?? d.xp;
+    const troph = prof?.trophies ?? d.trophies;
+    const coins = prof?.coins ?? d.coins;
+    const gems = prof?.gems ?? d.gems;
+    const acctTag = Auth.loggedIn ? '🟢' : '⚪';
     this.root.innerHTML = `
     <div class="screen clear" id="scr-menu">
       <div class="pheader">
         <div class="avatar">🦊</div>
         <div class="pinfo">
-          <div class="pname">${this.playerName}</div>
-          <div class="plevel">Nv ${d.level} • 🏆 ${d.trophies}</div>
-          <div class="xpbar"><div style="width:${Math.min(100, (d.xp / need) * 100)}%"></div></div>
+          <div class="pname">${acctTag} ${dispName}</div>
+          <div class="plevel">Nv ${lvl} • 🏆 ${troph}</div>
+          <div class="xpbar"><div style="width:${Math.min(100, (xp / need) * 100)}%"></div></div>
         </div>
         <div class="cur">
-          <div class="pill">🪙 ${d.coins}</div>
-          <div class="pill">💎 ${d.gems}</div>
+          <div class="pill">🪙 ${coins}</div>
+          <div class="pill">💎 ${gems}</div>
         </div>
       </div>
       <div class="hero-stage">
@@ -63,7 +144,7 @@ export class UI implements IGameUI {
           <span class="tag" style="color:${RARITY_COLOR[hero.rarity]}">${hero.rarity.toUpperCase()}</span>
           <span class="tag">❤️ ${hero.hp}</span>
           <span class="tag">⚔️ ${hero.damage}</span>
-          <span class="tag trofeu">🏆 ${d.trophies}</span>
+          <span class="tag trofeu">🏆 ${troph}</span>
         </div>
       </div>
       <div class="modes">${MODES.map((m) => `
@@ -135,15 +216,14 @@ export class UI implements IGameUI {
     } catch { /* silențios — butonul din Setări arată eroarea */ }
   }
 
-  private probeServer() {
+  private async probeServer() {
     // verificare rapidă dacă serverul e sus (pentru eticheta online)
     const dot = this.root.querySelector('#net-dot');
     const txt = this.root.querySelector('#net-txt');
     if (!dot || !txt) return;
     try {
-      const ws = new WebSocket(
-        (import.meta.env.VITE_NOVA_SERVER as string | undefined) || 'ws://localhost:2567'
-      );
+      const { SERVER_URL } = await import('../multiplayer/NetClient');
+      const ws = new WebSocket(SERVER_URL);
       const to = window.setTimeout(() => {
         try { ws.close(); } catch { /* noop */ }
       }, 2500);
@@ -217,7 +297,7 @@ export class UI implements IGameUI {
     }
     this.root.querySelector('#scr-menu')?.classList.add('hidden');
     // online dacă serverul răspunde — GameManager face fallback automat la boți
-    this.game?.startMatch(this.selectedMode, save.data.selectedHero, this.playerName, true);
+    this.game?.startMatch(this.selectedMode, save.data.selectedHero, Auth.displayName(this.playerName), true);
   }
 
   // ---------- PAGINI ----------
@@ -270,8 +350,12 @@ export class UI implements IGameUI {
       }).join('') + `<div class="bcard"><div class="inf"><div class="nm">📊 Statistici</div><div class="tt">Victorii ${d.wins} • Eliminări ${d.kills} • Super-uri ${d.supers} • Stele ${d.stars}</div></div></div>`;
     } else {
       title = '⚙️ SETĂRI';
+      const acct = Auth.loggedIn && Auth.profile
+        ? `<div class="bcard sel"><div class="face">🟢</div><div class="inf"><div class="nm">${Auth.profile.name}</div><div class="tt">Cont conectat • Nv ${Auth.profile.level} • 🏆 ${Auth.profile.trophies}</div></div><button class="mbtn ghost" id="btn-logout">Ieși</button></div>`
+        : `<div class="bcard"><div class="face">⚪</div><div class="inf"><div class="nm">Mod offline</div><div class="tt">Progresul e doar pe acest device.</div></div><button class="mbtn green" id="btn-login">Cont</button></div>`;
       const s = settings.data;
-      body = `
+      body =
+        acct + `
         <div class="setrow"><label>Calitate grafică</label><div class="seg" id="seg-q">
           ${(['low', 'medium', 'high'] as const).map((q) => `<button data-q="${q}" class="${s.quality === q ? 'sel' : ''}">${q === 'low' ? 'Joasă' : q === 'medium' ? 'Medie' : 'Înaltă'}</button>`).join('')}
         </div></div>
@@ -390,6 +474,17 @@ export class UI implements IGameUI {
         page.remove();
         this.renderMenu();
       }
+    });
+    page.querySelector('#btn-logout')?.addEventListener('click', () => {
+      Auth.logout();
+      audio.sfx('click');
+      page.remove();
+      this.showAuth('Te-ai deconectat.');
+    });
+    page.querySelector('#btn-login')?.addEventListener('click', () => {
+      audio.sfx('click');
+      page.remove();
+      this.showAuth();
     });
     page.querySelector('#btn-update')?.addEventListener('click', () => {
       void this.checkUpdateFlow(page);

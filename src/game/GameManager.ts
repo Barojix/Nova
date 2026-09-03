@@ -11,6 +11,7 @@ import { TouchControls } from '../player/TouchControls';
 import { audio } from '../audio/Audio';
 import { settings } from '../settings/Settings';
 import { save } from '../save/SaveSystem';
+import { Auth } from '../auth/Auth';
 import { Shop } from '../shop/Shop';
 import { Progression } from '../progression/Progression';
 import { NetClient } from '../multiplayer/NetClient';
@@ -92,6 +93,7 @@ export class GameManager {
   private remoteOver = false;
   private remoteWinner = -1;
   private inputT = 0;
+  private lastReward: { coins: number; xp: number; trophies: number } | null = null;
 
   // vitrină 3D meniu
   private showcaseRig: HeroRig | null = null;
@@ -310,12 +312,21 @@ export class GameManager {
     };
     this.net.onEvent = (e, a) => this.handleNetEvent(e, a);
     this.net.onReward = (r) => {
-      save.data.coins += r.coins;
-      save.data.xp += r.xp;
-      save.data.trophies = Math.max(0, save.data.trophies + r.trophies);
-      save.save();
+      this.lastReward = r;
+      if (Auth.loggedIn) {
+        Auth.applyReward(r);
+      } else {
+        save.data.coins += r.coins;
+        save.data.xp += r.xp;
+        save.data.trophies = Math.max(0, save.data.trophies + r.trophies);
+        save.save();
+      }
     };
-    this.net.connect({ name: playerName, heroId, modeId, room });
+    this.net.onProfile = (p) => Auth.setProfile(p);
+    this.net.connect({
+      name: playerName, heroId, modeId, room,
+      token: Auth.loggedIn ? Auth.token : undefined,
+    });
     audio.startMusic(true);
   }
 
@@ -384,6 +395,7 @@ export class GameManager {
     this.remoteStars = [];
     this.remoteOver = false;
     this.localId = 0;
+    this.lastReward = null;
     this.kills = 0;
     this.starsCollected = 0;
     this.supersUsed = 0;
@@ -753,11 +765,13 @@ export class GameManager {
       this.ui.banner('ÎNFRÂNGERE', 'Serverul a validat rezultatul.');
     }
     window.setTimeout(() => {
+      const rw = this.lastReward ?? { coins: 0, xp: 0, trophies: 0 };
+      const troph = Auth.loggedIn && Auth.profile ? Auth.profile.trophies : save.data.trophies;
       this.ui.showEnd({
         won, title: won ? 'VICTORIE!' : 'ÎNFRÂNGERE',
         reason: 'Meci online validat de server.',
-        kills: me?.kills ?? 0, coins: 0, xp: 0,
-        trophies: save.data.trophies, starPlayer: false,
+        kills: me?.kills ?? 0, coins: rw.coins, xp: rw.xp,
+        trophies: troph, starPlayer: false,
       });
     }, 1400);
   }
