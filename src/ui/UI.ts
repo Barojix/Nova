@@ -7,6 +7,8 @@ import { Shop } from '../shop/Shop';
 import { Progression } from '../progression/Progression';
 import { audio } from '../audio/Audio';
 import { perf } from '../core/Perf';
+import { APP_VERSION } from '../core/Version';
+import { checkForUpdate, installUpdate, type UpdateInfo } from '../updater/Updater';
 import type { GameManager, IGameUI } from '../game/GameManager';
 
 const HERO_FACE: Record<string, string> = { volt: '⚡', moss: '🌱', blip: '💜' };
@@ -116,6 +118,21 @@ export class UI implements IGameUI {
     try {
       (this as unknown as { game?: { showShowcase?: (h: string) => void } }).game?.showShowcase?.(save.data.selectedHero);
     } catch { /* meniul funcționează și fără 3D */ }
+    void this.autoCheckUpdate();
+  }
+
+  private updateChecked = false;
+
+  /** Verificare silențioasă o dată pe sesiune — anunță doar dacă există update. */
+  private async autoCheckUpdate() {
+    if (this.updateChecked) return;
+    this.updateChecked = true;
+    try {
+      const { update, info } = await checkForUpdate();
+      if (update && info) {
+        this.toast(`⬇️ Update disponibil: ${info.version} (Setări → Verifică actualizări)`);
+      }
+    } catch { /* silențios — butonul din Setări arată eroarea */ }
   }
 
   private probeServer() {
@@ -274,7 +291,10 @@ export class UI implements IGameUI {
         <div class="setrow togglerow">Auto-aim <div class="toggle ${s.autoAim ? 'on' : ''}" id="t-aim"></div></div>
         <div class="setrow togglerow">Vibrații <div class="toggle ${s.vibration ? 'on' : ''}" id="t-vib"></div></div>
         <div class="setrow togglerow">Afișează FPS/ping <div class="toggle ${s.showPerf ? 'on' : ''}" id="t-perf"></div></div>
-        <div class="setrow"><button class="mbtn ghost" id="btn-name">✏️ Schimbă numele (${this.playerName})</button></div>`;
+        <div class="setrow"><button class="mbtn ghost" id="btn-name">✏️ Schimbă numele (${this.playerName})</button></div>
+        <div class="setrow togglerow">Versiune <span style="color:var(--dim)">v${APP_VERSION}</span></div>
+        <div class="setrow"><button class="mbtn green" id="btn-update" style="width:100%">⬇️ Verifică actualizări</button>
+        <div class="tt" id="update-status" style="font-size:12px;color:var(--dim);margin-top:6px">Actualizări automate din GitHub Releases.</div></div>`;
     }
     page.innerHTML = `<div class="page-head"><h2>${title}</h2><button class="backbtn" id="pg-back">✕</button></div><div class="page-body">${body}</div>`;
     this.root.appendChild(page);
@@ -370,6 +390,68 @@ export class UI implements IGameUI {
         page.remove();
         this.renderMenu();
       }
+    });
+    page.querySelector('#btn-update')?.addEventListener('click', () => {
+      void this.checkUpdateFlow(page);
+    });
+  }
+
+  /** Flux update OTA: verificare → dialog cu changelog → descărcare/instalare. */
+  private async checkUpdateFlow(page: HTMLElement) {
+    const status = page.querySelector('#update-status');
+    const btn = page.querySelector('#btn-update') as HTMLButtonElement | null;
+    const say = (t: string) => {
+      if (status) status.textContent = t;
+    };
+    if (btn) btn.disabled = true;
+    say('⏳ Verific actualizări…');
+    audio.sfx('click');
+    try {
+      const { update, info } = await checkForUpdate();
+      if (!update || !info) {
+        say(`✅ Ai ultima versiune (v${APP_VERSION}).`);
+        audio.sfx('coin');
+        return;
+      }
+      this.showUpdateDialog(info);
+      say(`⬇️ Disponibilă v${info.version} — vezi dialogul.`);
+    } catch (e) {
+      say(`⚠️ ${(e as Error).message}`);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  private showUpdateDialog(info: UpdateInfo) {
+    const ov = document.createElement('div');
+    ov.className = 'overlay';
+    // escape minimal pentru changelog (text din release notes)
+    const notes = info.notes
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/\n/g, '<br>');
+    ov.innerHTML = `<div class="end-box">
+      <h1 class="win">⬇️ UPDATE v${info.version}</h1>
+      <div style="color:var(--dim);font-size:13px;margin:8px 0;max-height:120px;overflow-y:auto">${notes}</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+        <button class="mbtn green" id="u-dl">Actualizează acum</button>
+        <button class="mbtn ghost" id="u-later">Mai târziu</button>
+      </div></div>`;
+    this.root.appendChild(ov);
+    ov.querySelector('#u-later')?.addEventListener('click', () => ov.remove());
+    ov.querySelector('#u-dl')?.addEventListener('click', async () => {
+      (ov.querySelector('#u-dl') as HTMLButtonElement).disabled = true;
+      try {
+        const how = await installUpdate(info);
+        this.toast(
+          how === 'native'
+            ? '⬇️ Se descarcă… vei primi promptul de instalare.'
+            : '🌐 Am deschis pagina release-ului în browser.'
+        );
+      } catch {
+        this.toast('⚠️ Nu am putut porni descărcarea.');
+      }
+      ov.remove();
     });
   }
 

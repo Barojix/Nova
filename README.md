@@ -55,10 +55,38 @@ Fără server → jocul intră automat în mod **OFFLINE cu boți**.
 
 ```bash
 npm run build
-npx cap add android
+npx cap add android   # o singură dată
 npx cap sync
 npx cap open android   # apoi Run din Android Studio
 ```
+
+### APK automat din cloud (recomandat, fără PC puternic)
+
+La fiecare push pe `main`, GitHub Actions construiește automat APK-ul debug:
+
+1. Creează un repo GitHub gol (ex. `nova-arena`).
+2. `git remote add origin git@github.com:USER/nova-arena.git && git push -u origin main`
+3. Deschide repo-ul pe telefon → tab-ul **Actions** → ultimul run → artefactul
+   **nova-arena-apk** → descarcă și instalează (permite „surse necunoscute”).
+4. La tag-uri `v*` (ex. `git tag v0.2.0 && git push --tags`) se creează automat
+   un **Release** cu APK + `version.json` + changelog.
+
+APK-urile sunt semnate cu aceeași cheie (`android/app/debug.keystore` comisă în
+repo), iar `versionCode` crește la fiecare build — update-urile se instalează
+peste versiunea veche fără dezinstalare.
+
+### Actualizări automate în aplicație (OTA)
+
+Jocul verifică singur ultimul Release GitHub:
+
+- o dată pe sesiune, silențios, în meniu (toast doar dacă există update);
+- manual din **Setări → Verifică actualizări** (arată versiunea instalată);
+- la update disponibil apare dialog cu changelog → **Actualizează acum**:
+  pe Android descarcă APK-ul via DownloadManager și deschide promptul de
+  instalare; pe alte platforme deschide pagina release-ului în browser.
+
+Configurare: `src/updater/repo.ts` (`VITE_GITHUB_REPO="user/repo"` la build).
+Până la conectarea repo-ului, verificarea răspunde „neconfigurat".
 
 ## Controale
 
