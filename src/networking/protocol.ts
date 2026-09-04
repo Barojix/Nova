@@ -7,6 +7,9 @@ export type ClientMsg =
   | { t: 'login'; name: string; pass: string }
   | { t: 'refresh'; token: string }
   | { t: 'profile' }
+  | { t: 'shop-buy'; token: string; item: string }
+  | { t: 'shop-equip'; token: string; heroId: string; item: string }
+  | { t: 'quest-claim'; token: string; quest: string }
   | { t: 'input'; mx: number; mz: number; ax: number; az: number; attack: boolean; super: boolean }
   | { t: 'ping'; at: number };
 
@@ -19,6 +22,11 @@ export interface PublicProfile {
   trophies: number;
   wins: number;
   kills: number;
+  supers: number;
+  stars: number;
+  skins: string[];
+  equippedSkin: Record<string, string>;
+  questsClaimed: string[];
 }
 
 export type ServerMsg =
@@ -26,6 +34,7 @@ export type ServerMsg =
   | { t: 'auth-ok'; token: string; profile: PublicProfile }
   | { t: 'auth-error'; msg: string }
   | { t: 'profile'; profile: PublicProfile }
+  | { t: 'shop-result'; ok: boolean; msg: string; profile?: PublicProfile }
   | { t: 'snap'; fighters: SnapFighter[]; bullets: SnapBullet[]; stars: { id: number; x: number; z: number }[]; scoreA: number; scoreB: number; time: number; over: boolean; winner: number }
   | { t: 'event'; e: string; a?: unknown }
   | { t: 'reward'; coins: number; xp: number; trophies: number; profile?: PublicProfile }

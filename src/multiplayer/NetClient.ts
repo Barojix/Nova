@@ -177,3 +177,32 @@ export function authRequest(
     ws.onerror = () => done(() => reject(new Error('Serverul nu răspunde. Verifică conexiunea.')));
   });
 }
+
+/** Cerere unică către server (shop/misiuni) — deschide, trimite, închide. */
+export function serverRequest(
+  msg: ClientMsg,
+): Promise<{ ok: boolean; msg: string; profile?: import('../networking/protocol').PublicProfile }> {
+  return new Promise((resolve, reject) => {
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(SERVER_URL);
+    } catch {
+      reject(new Error('Serverul nu răspunde. Acțiunea va funcționa când ești online.'));
+      return;
+    }
+    const done = (fn: () => void) => {
+      window.clearTimeout(to);
+      try { ws.close(); } catch { /* ignore */ }
+      fn();
+    };
+    const to = window.setTimeout(() => done(() => reject(new Error('Serverul nu răspunde (timeout).'))), 8000);
+    ws.onopen = () => ws.send(JSON.stringify(msg));
+    ws.onmessage = (ev) => {
+      try {
+        const m = JSON.parse(ev.data as string) as ServerMsg;
+        if (m.t === 'shop-result') done(() => resolve({ ok: m.ok, msg: m.msg, profile: m.profile }));
+      } catch { /* ignore */ }
+    };
+    ws.onerror = () => done(() => reject(new Error('Serverul nu răspunde. Acțiunea va rămâne locală.')));
+  });
+}

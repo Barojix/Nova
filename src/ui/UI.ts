@@ -3,7 +3,7 @@ import { MODES } from '../data/modes';
 import { QUESTS } from '../data/economy';
 import { save } from '../save/SaveSystem';
 import { settings } from '../settings/Settings';
-import { Shop } from '../shop/Shop';
+import { Shop, buyOnline } from '../shop/Shop';
 import { Progression } from '../progression/Progression';
 import { Auth } from '../auth/Auth';
 import { audio } from '../audio/Audio';
@@ -121,13 +121,12 @@ export class UI implements IGameUI {
     const troph = prof?.trophies ?? d.trophies;
     const coins = prof?.coins ?? d.coins;
     const gems = prof?.gems ?? d.gems;
-    const acctTag = Auth.loggedIn ? '🟢' : '⚪';
     this.root.innerHTML = `
     <div class="screen clear" id="scr-menu">
-      <div class="pheader">
-        <div class="avatar">🦊</div>
+      <div class="menu-header">
+        <div class="avatar ${Auth.loggedIn ? '' : 'offline'}">🦊</div>
         <div class="pinfo">
-          <div class="pname">${acctTag} ${dispName}</div>
+          <div class="pname"><span class="acc-dot ${Auth.loggedIn ? '' : 'off'}"></span>${dispName}</div>
           <div class="plevel">Nv ${lvl} • 🏆 ${troph}</div>
           <div class="xpbar"><div style="width:${Math.min(100, (xp / need) * 100)}%"></div></div>
         </div>
@@ -136,10 +135,27 @@ export class UI implements IGameUI {
           <div class="pill">💎 ${gems}</div>
         </div>
       </div>
-      <div class="hero-stage">
-        <div class="hero-orb" style="border-color:${RARITY_COLOR[hero.rarity]}">${HERO_FACE[hero.id] ?? '🦸'}</div>
+      <div class="menu-left">
+        <button class="mbtn-tile" data-nav="brawlers" style="border-color:${RARITY_COLOR[hero.rarity]}">
+          <div class="ic">🦸</div><div>EROI</div>
+        </button>
+        <button class="mbtn-tile" data-nav="shop" style="border-color:var(--gold)">
+          <div class="ic">🛒</div><div>SHOP</div>
+        </button>
+        <button class="mbtn-tile" data-nav="quests" style="border-color:var(--blue)">
+          <div class="ic">📜</div><div>MISIUNI</div>
+        </button>
+        <button class="mbtn-tile" data-nav="settings" style="border-color:var(--purple)">
+          <div class="ic">⚙️</div><div>SETĂRI</div>
+        </button>
+      </div>
+      <div class="menu-center">
         <div class="hero-name">${hero.name}</div>
         <div class="hero-title">${hero.title}</div>
+        <div class="hero-stage">
+          <div class="hero-orb" style="border-color:${RARITY_COLOR[hero.rarity]}">${HERO_FACE[hero.id] ?? '🦸'}</div>
+          <div class="hero-podium"></div>
+        </div>
         <div class="hero-tags">
           <span class="tag" style="color:${RARITY_COLOR[hero.rarity]}">${hero.rarity.toUpperCase()}</span>
           <span class="tag">❤️ ${hero.hp}</span>
@@ -147,19 +163,21 @@ export class UI implements IGameUI {
           <span class="tag trofeu">🏆 ${troph}</span>
         </div>
       </div>
-      <div class="modes">${MODES.map((m) => `
-        <div class="mode-card ${m.id === this.selectedMode ? 'sel' : ''}" data-mode="${m.id}">
-          <div class="ic">${m.icon}</div><div class="nm">${m.name}</div><div class="ds">${m.players} • ${m.target}</div>
-        </div>`).join('')}</div>
-      <div class="play-row">
-        <button class="btn-play" id="btn-play">JOACĂ</button>
-        <div class="online-row"><span class="dot off" id="net-dot"></span><span id="net-txt">Offline — boți • serverul pornește separat</span></div>
+      <div class="menu-right">
+        <div class="modes-label">MODURI</div>
+        ${MODES.map((m) => `
+          <div class="mode-card ${m.id === this.selectedMode ? 'sel' : ''}" data-mode="${m.id}">
+            <div class="ic">${m.icon}</div>
+            <div class="inf">
+              <div class="nm">${m.name}</div>
+              <div class="ds">${m.players} • ${m.target}</div>
+            </div>
+            ${m.id === this.selectedMode ? '<div class="badge">GO</div>' : ''}
+          </div>`).join('')}
       </div>
-      <div class="navbar">
-        <button class="navbtn" data-nav="brawlers">🦸<br>Eroi</button>
-        <button class="navbtn" data-nav="shop">🛒<br>Shop</button>
-        <button class="navbtn" data-nav="quests">📜<br>Misiuni</button>
-        <button class="navbtn" data-nav="settings">⚙️<br>Setări</button>
+      <div class="play-row">
+        <button class="btn-play" id="btn-play">▶ JOACĂ</button>
+        <div class="online-row"><span class="dot off" id="net-dot"></span><span id="net-txt">Offline — boți • serverul pornește separat</span></div>
       </div>
     </div>
     <div id="hud">
@@ -304,6 +322,7 @@ export class UI implements IGameUI {
 
   private openPage(which: string) {
     const d = save.data;
+    const prof = Auth.loggedIn ? Auth.profile : null;
     const page = document.createElement('div');
     page.className = 'page';
     let body = '';
@@ -325,7 +344,9 @@ export class UI implements IGameUI {
         </div>`;
       }).join('');
     } else if (which === 'shop') {
-      title = `🛒 SHOP <span style="font-size:13px">🪙 ${d.coins} • 💎 ${d.gems}</span>`;
+      const coinsV = prof?.coins ?? d.coins;
+      const gemsV = prof?.gems ?? d.gems;
+      title = `🛒 SHOP <span style="font-size:13px">🪙 ${coinsV} • 💎 ${gemsV}</span>`;
       body = Shop.items().map((i) => {
         const owned = Shop.owned(i.id);
         return `<div class="bcard">
@@ -336,18 +357,26 @@ export class UI implements IGameUI {
         </div>`;
       }).join('');
     } else if (which === 'quests') {
+      const stats = prof
+        ? { kills: prof.kills, wins: prof.wins, supers: prof.supers, stars: prof.stars }
+        : { kills: d.kills, wins: d.wins, supers: d.supers, stars: d.stars };
+      const qProg: Record<string, number> = {
+        'q-kills': stats.kills, 'q-wins': stats.wins,
+        'q-super': stats.supers, 'q-stars': stats.stars,
+      };
+      const claimed = prof ? prof.questsClaimed : d.questsClaimed;
       title = '📜 MISIUNI';
       body = QUESTS.map((q) => {
-        const prog = Math.min(q.target, d.quests[q.id] ?? 0);
-        const claimed = d.questsClaimed.includes(q.id);
-        const done = prog >= q.target;
+        const prog = Math.min(q.target, qProg[q.id] ?? 0);
+        const done = prof ? prog >= q.target : (d.quests[q.id] ?? 0) >= q.target;
+        const isClaimed = claimed.includes(q.id);
         return `<div class="bcard"><div class="inf">
           <div class="nm">${q.name}</div><div class="tt">${q.desc} — ${prog}/${q.target}</div>
           <div class="qbar"><div style="width:${(prog / q.target) * 100}%"></div></div>
           <div class="tt">🎁 🪙${q.rewardCoins} + ✨${q.rewardXp} XP</div></div>
-          <button class="mbtn ${done && !claimed ? 'green' : 'ghost'}" data-quest="${q.id}" ${!done || claimed ? 'disabled' : ''}>${claimed ? 'LUAT' : done ? 'REVENDICĂ' : `${prog}/${q.target}`}</button>
+          <button class="mbtn ${done && !isClaimed ? 'green' : 'ghost'}" data-quest="${q.id}" ${!done || isClaimed ? 'disabled' : ''}>${isClaimed ? 'LUAT' : done ? 'REVENDICĂ' : `${prog}/${q.target}`}</button>
         </div>`;
-      }).join('') + `<div class="bcard"><div class="inf"><div class="nm">📊 Statistici</div><div class="tt">Victorii ${d.wins} • Eliminări ${d.kills} • Super-uri ${d.supers} • Stele ${d.stars}</div></div></div>`;
+      }).join('') + `<div class="bcard"><div class="inf"><div class="nm">📊 Statistici</div><div class="tt">Victorii ${stats.wins} • Eliminări ${stats.kills} • Super-uri ${stats.supers} • Stele ${stats.stars}</div></div></div>`;
     } else {
       title = '⚙️ SETĂRI';
       const acct = Auth.loggedIn && Auth.profile
@@ -397,8 +426,10 @@ export class UI implements IGameUI {
       });
     });
     page.querySelectorAll('[data-buy]').forEach((b) => {
-      b.addEventListener('click', () => {
-        const r = Shop.buy((b as HTMLElement).dataset.buy!);
+      b.addEventListener('click', async () => {
+        const btn = b as HTMLButtonElement;
+        btn.disabled = true;
+        const r = await buyOnline((b as HTMLElement).dataset.buy!);
         audio.sfx(r.ok ? 'coin' : 'hurt');
         this.toast(r.msg);
         page.remove();
@@ -406,9 +437,23 @@ export class UI implements IGameUI {
       });
     });
     page.querySelectorAll('[data-quest]').forEach((b) => {
-      b.addEventListener('click', () => {
-        const ok = Progression.claimQuest((b as HTMLElement).dataset.quest!);
-        audio.sfx(ok ? 'coin' : 'hurt');
+      b.addEventListener('click', async () => {
+        const qid = (b as HTMLElement).dataset.quest!;
+        if (Auth.loggedIn) {
+          const { serverRequest } = await import('../multiplayer/NetClient');
+          try {
+            const r = await serverRequest({ t: 'quest-claim', token: Auth.token, quest: qid });
+            if (r.profile) Auth.setProfile(r.profile);
+            audio.sfx(r.ok ? 'coin' : 'hurt');
+            this.toast(r.msg);
+          } catch (e) {
+            audio.sfx('hurt');
+            this.toast((e as Error).message);
+          }
+        } else {
+          const ok = Progression.claimQuest(qid);
+          audio.sfx(ok ? 'coin' : 'hurt');
+        }
         page.remove();
         this.openPage('quests');
       });
