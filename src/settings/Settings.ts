@@ -11,6 +11,7 @@ export interface SettingsData {
   autoAim: boolean;
   vibration: boolean;
   showPerf: boolean;
+  lang: 'en' | 'ro';
 }
 
 const KEY = 'nova-arena-settings-v1';
@@ -26,6 +27,7 @@ const DEFAULTS: SettingsData = {
   autoAim: true,
   vibration: true,
   showPerf: true,
+  lang: 'en',
 };
 
 export class Settings {

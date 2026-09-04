@@ -272,7 +272,7 @@ function snapOf(room: Room): Extract<ServerMsg, { t: 'snap' }> {
     t: 'snap',
     fighters: m.fighters.map((f) => ({
       id: f.id, x: f.x, z: f.z, facing: f.facing,
-      hp: Math.max(0, Math.round(f.hp)), maxHp: f.def.hp,
+      hp: Math.max(0, Math.round(f.hp)), maxHp: f.maxHp,
       alive: f.alive, team: f.team, heroId: f.heroId, name: f.name,
       kills: f.kills, stars: f.stars, superReady: f.superReady,
       ammo: f.ammo, powerups: f.powerups,
@@ -381,17 +381,22 @@ wss.on('connection', (ws: WebSocket, req) => {
       const power = account
         ? Math.max(1, Math.min(11, Math.round(account.heroPower[heroId] ?? 1)))
         : 1;
+      const gadget = account?.heroGadgets[heroId];
+      let def = scaleHeroDef(heroById(heroId), power);
+      if (gadget === 'sprint') def = { ...def, speed: def.speed * 1.1 };
+      if (gadget === 'furie') def = { ...def, superCooldownHits: Math.max(3, def.superCooldownHits - 2) };
+      const maxHp = def.hp + (gadget === 'scut' ? 800 : 0);
       const name = account ? account.name : String(msg.name ?? 'Erou').slice(0, 14) || 'Erou';
       const team = teamFor(room);
       // spawn simplu pe jumătatea echipei
       const sp = team === 0 ? { x: -13, z: 0 } : { x: 13, z: 0 };
-      const def = scaleHeroDef(heroById(heroId), power);
       const f: SimFighter = {
         id: uid(), name, heroId, def, team,
         isBot: false, isLocal: false,
         x: sp.x + (Math.random() - 0.5) * 2, z: sp.z + (Math.random() - 0.5) * 4,
-        facing: 0, hp: def.hp, alive: true, respawnT: 0, reloadT: 0,
-        ammo: 3, ammoT: 0,
+        facing: 0, hp: maxHp, maxHp, alive: true, respawnT: 0, reloadT: 0,
+        ammo: def.ammoMax, ammoT: 0,
+        gadget,
         superCharge: 0, superReady: false, supersUsed: 0, kills: 0, deaths: 0, stars: 0,
         power, powerups: 0,
         aiT: 0, aiTx: 0, aiTz: 0, aiMode: 'fight',
@@ -413,8 +418,8 @@ wss.on('connection', (ws: WebSocket, req) => {
         m.fighters.push({
           id: uid(), name: BOT_NAMES[i % BOT_NAMES.length], heroId: bh, def: bdef, team: bt,
           isBot: true, isLocal: false,
-          x: bsp.x, z: bsp.z, facing: 0, hp: bdef.hp, alive: true,
-          respawnT: 0, reloadT: 0, ammo: 3, ammoT: 0, superCharge: 0, superReady: false, supersUsed: 0,
+          x: bsp.x, z: bsp.z, facing: 0, hp: bdef.hp, maxHp: bdef.hp, alive: true,
+          respawnT: 0, reloadT: 0, ammo: bdef.ammoMax, ammoT: 0, superCharge: 0, superReady: false, supersUsed: 0,
           kills: 0, deaths: 0, stars: 0, power: 1, powerups: 0,
           aiT: 0, aiTx: 0, aiTz: 0, aiMode: 'fight',
         });
@@ -496,6 +501,20 @@ wss.on('connection', (ws: WebSocket, req) => {
         return;
       }
       const r = store.upgradeHero(a.id, msg.hero);
+      send(ws, { t: 'shop-result', ok: r.ok, msg: r.msg, profile: r.profile });
+      return;
+    }
+    if (msg.t === 'gadget-buy') {
+      if (!authAllowed()) {
+        send(ws, { t: 'shop-result', ok: false, msg: 'Prea multe cereri. Așteaptă.' });
+        return;
+      }
+      const a = store.refresh(msg.token);
+      if (!a) {
+        send(ws, { t: 'shop-result', ok: false, msg: 'Sesiune expirată. Conectează-te din nou.' });
+        return;
+      }
+      const r = store.buyGadget(a.id, msg.hero, msg.gadget);
       send(ws, { t: 'shop-result', ok: r.ok, msg: r.msg, profile: r.profile });
       return;
     }
@@ -664,7 +683,11 @@ wss.on('connection', (ws: WebSocket, req) => {
           const acc = store.accountById(pid);
           const hero = isHeroId(pl.hero) ? pl.hero : 'volt';
           const power = acc ? Math.max(1, Math.min(11, Math.round(acc.heroPower[hero] ?? 1))) : 1;
-          const def = scaleHeroDef(heroById(hero), power);
+          const gadget = acc?.heroGadgets[hero];
+          let def = scaleHeroDef(heroById(hero), power);
+          if (gadget === 'sprint') def = { ...def, speed: def.speed * 1.1 };
+          if (gadget === 'furie') def = { ...def, superCooldownHits: Math.max(3, def.superCooldownHits - 2) };
+          const maxHp = def.hp + (gadget === 'scut' ? 800 : 0);
           const team = mine.modeId === 'showdown' ? i : i % 2;
           const a = (i / Math.max(1, mine.players.size)) * Math.PI * 2;
           const half = map.size / 2;
@@ -675,8 +698,9 @@ wss.on('connection', (ws: WebSocket, req) => {
           room.match.fighters.push({
             id: fid, name: pl.name, heroId: hero, def, team,
             isBot: false, isLocal: false,
-            x: sp.x, z: sp.z, facing: 0, hp: def.hp, alive: true,
-            respawnT: 0, reloadT: 0, ammo: 3, ammoT: 0, superCharge: 0, superReady: false,
+            x: sp.x, z: sp.z, facing: 0, hp: maxHp, maxHp, alive: true,
+            respawnT: 0, reloadT: 0, ammo: def.ammoMax, ammoT: 0, superCharge: 0, superReady: false,
+            gadget,
             supersUsed: 0, kills: 0, deaths: 0, stars: 0, power, powerups: 0,
             aiT: 0, aiTx: 0, aiTz: 0, aiMode: 'fight',
           });

@@ -95,37 +95,89 @@ export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
   ground.receiveShadow = settings.shadows;
   group.add(ground);
 
-  // gard perimetral stil Brawl + fâșie exterioară (fără void pe margine)
-  const fenceMat = new THREE.MeshLambertMaterial({ color: 0x6b4a2b });
-  const fenceTopMat = new THREE.MeshLambertMaterial({ color: 0x8a5f36 });
-  disposables.push(fenceMat, fenceTopMat);
+  // zid perimetral din cuburi (stil Brawl) + turnuri de colț + decor exterior
+  const blockMatA = new THREE.MeshLambertMaterial({ color: 0x4a5a9c });
+  const blockMatB = new THREE.MeshLambertMaterial({ color: 0x5a6cb8 });
+  const trimMat = new THREE.MeshLambertMaterial({ color: 0x7af0ff });
+  disposables.push(blockMatA, blockMatB, trimMat);
   {
-    const t = 0.5; // grosime gard
-    const y = 0.55;
-    const mkFence = (w: number, d: number, x: number, z: number) => {
-      const geo = new THREE.BoxGeometry(w, 1.1, d);
-      disposables.push(geo);
-      const m = new THREE.Mesh(geo, fenceMat);
-      m.position.set(x, y, z);
+    const F = half + 1.6;
+    const n = Math.max(6, Math.round(def.size / 3));
+    const step = (def.size + 3.2) / n;
+    const blockGeo = new THREE.BoxGeometry(1, 1, 1);
+    disposables.push(blockGeo);
+    let bi = 0;
+    const block = (x: number, z: number, w: number, h: number, d: number) => {
+      const m = new THREE.Mesh(blockGeo, bi++ % 2 ? blockMatA : blockMatB);
+      m.position.set(x, h / 2, z);
+      m.scale.set(w, h, d);
+      m.castShadow = settings.shadows;
       group.add(m);
-      const capGeo = new THREE.BoxGeometry(w + 0.1, 0.16, d + 0.1);
-      disposables.push(capGeo);
-      const cap = new THREE.Mesh(capGeo, fenceTopMat);
-      cap.position.set(x, y + 0.63, z);
-      group.add(cap);
     };
-    const F = half + 1.2;
-    mkFence(def.size + 3.4, t, 0, -F);
-    mkFence(def.size + 3.4, t, 0, F);
-    mkFence(t, def.size + 3.4, -F, 0);
-    mkFence(t, def.size + 3.4, F, 0);
-    // stâlpi la colțuri
-    const postGeo = new THREE.BoxGeometry(0.8, 1.7, 0.8);
-    disposables.push(postGeo);
+    for (let i = 0; i < n; i++) {
+      const t = -half - 1.6 + step * (i + 0.5);
+      const h = 1.5 + ((i * 7) % 3) * 0.35; // înălțimi variate
+      block(t, -F, step * 0.96, h, 1.4);
+      block(t, F, step * 0.96, 2.25 - (h - 1.5), 1.4);
+      block(-F, t, 1.4, h, step * 0.96);
+      block(F, t, 1.4, 2.25 - (h - 1.5), step * 0.96);
+    }
+    // bandă luminoasă pe zid
+    const trimGeo = new THREE.BoxGeometry(1, 0.12, 1);
+    disposables.push(trimGeo);
+    const trim = (w: number, d: number, x: number, z: number) => {
+      const m = new THREE.Mesh(trimGeo, trimMat);
+      m.position.set(x, 1.62, z);
+      m.scale.set(w, 1, d);
+      group.add(m);
+    };
+    trim(def.size + 3.4, 0.3, 0, -F);
+    trim(def.size + 3.4, 0.3, 0, F);
+    trim(0.3, def.size + 3.4, -F, 0);
+    trim(0.3, def.size + 3.4, F, 0);
+    // turnuri de colț
+    const towerGeo = new THREE.BoxGeometry(2.2, 3.4, 2.2);
+    const capGeo = new THREE.BoxGeometry(2.7, 0.5, 2.7);
+    disposables.push(towerGeo, capGeo);
     for (const [px, pz] of [[-F, -F], [F, -F], [-F, F], [F, F]]) {
-      const p = new THREE.Mesh(postGeo, fenceTopMat);
-      p.position.set(px, 0.85, pz);
-      group.add(p);
+      const t = new THREE.Mesh(towerGeo, blockMatA);
+      t.position.set(px, 1.7, pz);
+      t.castShadow = settings.shadows;
+      group.add(t);
+      const cp = new THREE.Mesh(capGeo, trimMat);
+      cp.position.set(px, 3.6, pz);
+      group.add(cp);
+    }
+    // decor exterior: pietre, plante, cristale (determinist per hartă)
+    const rockGeo = new THREE.DodecahedronGeometry(0.9);
+    const plantGeo = new THREE.ConeGeometry(0.7, 1.6, 7);
+    const crysGeo = new THREE.OctahedronGeometry(0.7);
+    disposables.push(rockGeo, plantGeo, crysGeo);
+    const rockMat = new THREE.MeshLambertMaterial({ color: 0x5b6172 });
+    const plantMat = new THREE.MeshLambertMaterial({ color: 0x2fae5f });
+    const crysMat = new THREE.MeshLambertMaterial({ color: 0x7af0ff, emissive: 0x1a4a5a });
+    disposables.push(rockMat, plantMat, crysMat);
+    let seed = 12345;
+    for (const ch of def.id) seed = (seed * 31 + ch.charCodeAt(0)) % 100000;
+    const rnd = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const R = half + 5;
+    for (let i = 0; i < 42; i++) {
+      const a = rnd() * Math.PI * 2;
+      const r = R + rnd() * half * 1.6;
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      const kind = i % 3;
+      const m = new THREE.Mesh(
+        kind === 0 ? rockGeo : kind === 1 ? plantGeo : crysGeo,
+        kind === 0 ? rockMat : kind === 1 ? plantMat : crysMat
+      );
+      const s = 0.7 + rnd() * 1.6;
+      m.scale.setScalar(s);
+      m.position.set(x, (kind === 1 ? 0.8 : 0.4) * s, z);
+      m.rotation.y = rnd() * Math.PI;
+      group.add(m);
     }
     // fâșie exterioară cu ACELAȘI pământ (se pierde marginea hărții în orizont)
     const skirtTex = new THREE.CanvasTexture(cnv);

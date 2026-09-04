@@ -59,9 +59,10 @@ export class TouchControls {
     this.supKnob = this.root.querySelector('#tc-sknob');
 
     // --- mișcare: orice atingere pe jumătatea stângă devine joystick ---
+    // (inclusiv pe baza fantomă a stick-ului — altfel atingerea „moare" acolo)
     this.root.addEventListener('pointerdown', (e) => {
       const t = e.target as HTMLElement;
-      if (t.closest('.tc-stick')) return; // stick-urile își gestionează singure atingerea
+      if (t.closest('.tc-stick') && !t.closest('#tc-move')) return; // stick-urile de foc își gestionează singure atingerea
       if (e.clientX > window.innerWidth * 0.45) return; // dreapta = zona de atac
       if (this.moveId !== null) {
         // pointer blocat anterior (up pierdut în afara ecranului): îl furăm,

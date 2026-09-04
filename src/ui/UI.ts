@@ -1,4 +1,4 @@
-import { HEROES, RARITY_COLOR, RARITY_ORDER, POWER_MAX, UPGRADE_COST } from '../data/heroes';
+import { HEROES, RARITY_COLOR, RARITY_ORDER, POWER_MAX, UPGRADE_COST, GADGETS } from '../data/heroes';
 import { MODES } from '../data/modes';
 import { MAPS } from '../data/maps';
 import { QUESTS } from '../data/economy';
@@ -14,6 +14,7 @@ import { checkForUpdate, installUpdate, type UpdateInfo } from '../updater/Updat
 import { AppUpdater } from '../updater/AppUpdater';
 import { Capacitor } from '@capacitor/core';
 import { lobby } from '../multiplayer/LobbyClient';
+import { T, modeName, modeDesc, modeTarget, heroTitle, heroDesc, gadgetName, gadgetDesc } from '../i18n/lang';
 import type { FriendEntry, RoomStateInfo } from '../networking/protocol';
 import type { GameManager, IGameUI } from '../game/GameManager';
 
@@ -40,6 +41,8 @@ export class UI implements IGameUI {
   private friendIncoming: FriendEntry[] = [];
   private friendOutgoing: string[] = [];
   private heroSort: 'trophies' | 'rarity' | 'power' = 'rarity';
+  private heroSortDir: 1 | -1 = 1;
+  private heroDetail: string | null = null;
 
   constructor(private root: HTMLElement) {
     this.playerName =
@@ -66,7 +69,7 @@ export class UI implements IGameUI {
       this.renderMenu();
       // revalidare silențioasă — token expirat => ecran de cont
       void Auth.refresh().then((ok) => {
-        if (!ok) this.showAuth('Sesiunea a expirat. Conectează-te din nou.');
+        if (!ok) this.showAuth(T('Session expired. Log in again.', 'Sesiunea a expirat. Conectează-te din nou.'));
         else this.renderMenu();
       });
     } else if (Auth.offlineMode) {
@@ -197,12 +200,12 @@ export class UI implements IGameUI {
     btnSkip?.addEventListener('click', () => {
       audio.sfx('click');
       this.stopGatePoll();
-      this.toast('Joci pe versiunea veche — multiplayer-ul poate fi incompatibil.');
+      this.toast(T('You play on the old version — multiplayer may be incompatible.', 'Joci pe versiunea veche — multiplayer-ul poate fi incompatibil.'));
       this.proceedBoot();
     });
     btnOpen?.addEventListener('click', () => {
       audio.sfx('click');
-      void AppUpdater.openInstaller().catch(() => this.toast('Nu pot deschide instalarea.'));
+      void AppUpdater.openInstaller().catch(() => this.toast(T('Cannot open installer.', 'Nu pot deschide instalarea.')));
     });
     // descărcarea pornește SINGURĂ, fără să întrebe
     try {
@@ -257,17 +260,17 @@ export class UI implements IGameUI {
       <div class="auth-wrap">
         <div class="auth-logo">⚡</div>
         <h1 class="auth-title">STARFORGE</h1>
-        <div class="auth-sub">Contul tău păstrează trofee, monezi și progres pe orice device.</div>
+        <div class="auth-sub">${T('Your account keeps trophies, coins and progress on any device.', 'Contul tău păstrează trofee, monezi și progres pe orice device.')}</div>
         ${notice ? `<div class="auth-err">${notice}</div>` : ''}
         <div class="seg" id="auth-tabs">
-          <button data-at="login" class="${this.authTab === 'login' ? 'sel' : ''}">Conectare</button>
-          <button data-at="register" class="${this.authTab === 'register' ? 'sel' : ''}">Cont nou</button>
+          <button data-at="login" class="${this.authTab === 'login' ? 'sel' : ''}">${T('Log in', 'Conectare')}</button>
+          <button data-at="register" class="${this.authTab === 'register' ? 'sel' : ''}">${T('New account', 'Cont nou')}</button>
         </div>
-        <input class="ainput" id="auth-name" maxlength="14" placeholder="Nume luptător (3-14, litere/cifre/_)" autocomplete="username" />
-        <input class="ainput" id="auth-pass" type="password" maxlength="64" placeholder="Parolă (minim 4 caractere)" autocomplete="current-password" />
+        <input class="ainput" id="auth-name" maxlength="14" placeholder="${T('Fighter name (3-14, letters/numbers/_)', 'Nume luptător (3-14, litere/cifre/_)')}" autocomplete="username" />
+        <input class="ainput" id="auth-pass" type="password" maxlength="64" placeholder="${T('Password (min 4 chars)', 'Parolă (minim 4 caractere)')}" autocomplete="current-password" />
         <div class="auth-err hidden" id="auth-err"></div>
-        <button class="btn-play" id="auth-go">${this.authTab === 'login' ? 'INTRĂ ÎN JOC' : 'CREEAZĂ CONT'}</button>
-        <button class="mbtn ghost" id="auth-offline" style="width:100%;margin-top:10px">Joacă offline, fără cont</button>
+        <button class="btn-play" id="auth-go">${this.authTab === 'login' ? T('ENTER GAME', 'INTRĂ ÎN JOC') : T('CREATE ACCOUNT', 'CREEAZĂ CONT')}</button>
+        <button class="mbtn ghost" id="auth-offline" style="width:100%;margin-top:10px">${T('Play offline, no account', 'Joacă offline, fără cont')}</button>
       </div>
     </div>
     <div id="hud"></div><div id="toast"></div><div id="perf"></div>`;
@@ -297,7 +300,7 @@ export class UI implements IGameUI {
         err.classList.remove('hidden');
         audio.sfx('hurt');
         btn.disabled = false;
-        btn.textContent = this.authTab === 'login' ? 'INTRĂ ÎN JOC' : 'CREEAZĂ CONT';
+        btn.textContent = this.authTab === 'login' ? T('ENTER GAME', 'INTRĂ ÎN JOC') : T('CREATE ACCOUNT', 'CREEAZĂ CONT');
       }
     };
     this.root.querySelector('#auth-go')?.addEventListener('click', () => void go());
@@ -345,14 +348,14 @@ export class UI implements IGameUI {
       <div class="b-mid">
         <div class="b-rail">
           <button class="rail-btn" data-nav="brawlers" style="--rc:${RARITY_COLOR[hero.rarity]}">
-            <span class="ic">🦸</span><span>EROI</span>
+            <span class="ic">🦸</span><span>${T('HEROES', 'EROI')}</span>
           </button>
           <button class="rail-btn gold" data-nav="shop">
-            <span class="ic">🛒</span><span>SHOP</span>
+            <span class="ic">🛒</span><span>${T('SHOP', 'SHOP')}</span>
           </button>
         </div>
         <div class="b-stage">
-          <div class="hero-plate">
+          <button class="hero-plate" id="hero-plate">
             <div class="hero-name">${hero.name}</div>
             <div class="hero-title">${hero.title}</div>
             <div class="hero-tags">
@@ -361,18 +364,18 @@ export class UI implements IGameUI {
               <span class="tag">⚔️ ${hero.damage}</span>
               <span class="tag">🔋 Nv ${lvl}</span>
             </div>
-          </div>
+          </button>
         </div>
         <div class="b-rail">
           <button class="rail-btn blue" data-nav="quests">
-            <span class="ic">📜</span><span>MISIUNI</span>
+            <span class="ic">📜</span><span>${T('QUESTS', 'MISIUNI')}</span>
           </button>
           <button class="rail-btn gold" data-nav="friends">
-            <span class="ic">👥</span><span>PRIETENI</span>
+            <span class="ic">👥</span><span>${T('FRIENDS', 'PRIETENI')}</span>
             <span class="rbadge" id="friends-badge" style="display:${this.friendIncoming.length > 0 ? 'flex' : 'none'}">${this.friendIncoming.length > 0 ? this.friendIncoming.length : ''}</span>
           </button>
           <button class="rail-btn purple" id="btn-daily">
-            <span class="ic">🎁</span><span>ZILNIC</span>
+            <span class="ic">🎁</span><span>${T('DAILY', 'ZILNIC')}</span>
           </button>
         </div>
       </div>
@@ -383,12 +386,12 @@ export class UI implements IGameUI {
         </div>
         <button class="mode-pick" data-nav="modes">
           <span class="ic">${mode.icon}</span>
-          <span class="inf"><span class="nm">${mode.name}</span><span class="ds">${mode.players} • ${mode.target}</span></span>
+          <span class="inf"><span class="nm">${modeName(mode)}</span><span class="ds">${mode.players} • ${modeTarget(mode)}</span></span>
           <span class="go">▸</span>
         </button>
         <div class="play-wrap">
-          <button class="btn-play" id="btn-play">PLAY</button>
-          <div class="online-row"><span class="dot off" id="net-dot"></span><span id="net-txt">Offline — boți</span></div>
+          <button class="btn-play" id="btn-play">${T('PLAY', 'JOACĂ')}</button>
+          <div class="online-row"><span class="dot off" id="net-dot"></span><span id="net-txt">${T('Offline — bots', 'Offline — boți')}</span></div>
         </div>
       </div>
     </div>
@@ -397,6 +400,7 @@ export class UI implements IGameUI {
         <div class="scorebox"><small id="hud-mode">KNOCKOUT</small><span id="hud-score">0 : 0</span></div>
         <button class="pausebtn" id="btn-pause">⏸</button>
       </div>
+      <div id="lowhp"></div>
       <div id="killfeed"></div>
       <div id="countdown"></div>
       <div id="respawn"></div>
@@ -405,10 +409,14 @@ export class UI implements IGameUI {
     <div id="toast"></div>
     <div id="perf"></div>`;
     this.root.querySelector('#btn-play')?.addEventListener('click', () => this.startMatchmaking());
+    this.root.querySelector('#hero-plate')?.addEventListener('click', () => {
+      audio.sfx('ui');
+      this.openPage('brawlers');
+    });
     this.root.querySelector('#btn-daily')?.addEventListener('click', () => {
       const got = Progression.claimDaily();
       audio.sfx(got ? 'coin' : 'click');
-      this.toast(got ? '🎁 Bonus zilnic: +50 🪙 +3 💎!' : '🎁 Bonusul de azi e deja luat. Revino mâine!');
+      this.toast(got ? T('🎁 Daily bonus: +50 🪙 +3 💎!', '🎁 Bonus zilnic: +50 🪙 +3 💎!') : T("🎁 Today's bonus already claimed. Come back tomorrow!", '🎁 Bonusul de azi e deja luat. Revino mâine!'));
     });
     this.root.querySelectorAll('[data-nav]').forEach((el) => {
       el.addEventListener('click', () => {
@@ -434,7 +442,7 @@ export class UI implements IGameUI {
     try {
       const { update, info } = await checkForUpdate();
       if (update && info) {
-        this.toast(`⬇️ Update disponibil: ${info.version} (Setări → Verifică actualizări)`);
+        this.toast(T(`⬇️ Update available: ${info.version} (Settings → Check for updates)`, `⬇️ Update disponibil: ${info.version} (Setări → Verifică actualizări)`));
       }
     } catch { /* silențios — butonul din Setări arată eroarea */ }
   }
@@ -471,24 +479,24 @@ export class UI implements IGameUI {
     ov.innerHTML = `
       <div class="mm-box">
         <div class="spinner">🌀</div>
-        <h2>CAUT MECI…</h2>
-        <div class="mm-tips" id="mm-tip">${mode.icon} ${mode.name} • ${mode.desc}</div>
-        <div class="mm-tips">Camera ${Math.floor(Math.random() * 9000 + 1000)} • Jucători 1/6…</div>
-        <button class="mbtn ghost" id="mm-cancel">Anulează</button>
+        <h2>${T('FINDING MATCH…', 'CAUT MECI…')}</h2>
+        <div class="mm-tips" id="mm-tip">${mode.icon} ${modeName(mode)} • ${modeDesc(mode)}</div>
+        <div class="mm-tips">${T('Room', 'Camera')} ${Math.floor(Math.random() * 9000 + 1000)} • ${T('Players', 'Jucători')} 1/6…</div>
+        <button class="mbtn ghost" id="mm-cancel">${T('Cancel', 'Anulează')}</button>
       </div>`;
     this.root.appendChild(ov);
     let n = 1;
     const tips = [
-      '💡 Folosește tufișurile ca să te ascunzi!',
-      '💡 Super-ul se încarcă lovind inamicii!',
-      '💡 În Star Rush, la moarte scapi stelele!',
-      '💡 Boții fug când au HP mic — urmărește-i!',
+      T('💡 Use bushes to hide!', '💡 Folosește tufișurile ca să te ascunzi!'),
+      T('💡 Your Super charges by hitting enemies!', '💡 Super-ul se încarcă lovind inamicii!'),
+      T('💡 Dying drops your stars/gems!', '💡 La moarte scapi stelele/gemele!'),
+      T('💡 Bots flee at low HP — chase them!', '💡 Boții fug când au HP mic — urmărește-i!'),
     ];
     let ti = 0;
     this.mmTimer = window.setInterval(() => {
       n++;
       const el = ov.querySelectorAll('.mm-tips')[1];
-      if (el) el.textContent = `Camera ${Math.floor(Math.random() * 9000 + 1000)} • Jucători ${Math.min(6, n)}/6…`;
+      if (el) el.textContent = `${T('Room', 'Camera')} ${Math.floor(Math.random() * 9000 + 1000)} • ${T('Players', 'Jucători')} ${Math.min(6, n)}/6…`;
       if (n % 2 === 0) {
         const tip = ov.querySelector('#mm-tip');
         if (tip) tip.textContent = tips[ti++ % tips.length];
@@ -514,7 +522,7 @@ export class UI implements IGameUI {
 
   private beginMatch(mode?: string, room?: string, map?: string) {
     if (!this.game) {
-      this.toast('3D indisponibil pe acest dispozitiv/browser.');
+      this.toast(T('3D unavailable on this device/browser.', '3D indisponibil pe acest dispozitiv/browser.'));
       this.root.querySelector('#scr-menu')?.classList.remove('hidden');
       return;
     }
@@ -522,6 +530,30 @@ export class UI implements IGameUI {
     this.root.querySelector('#scr-menu')?.classList.add('hidden');
     // online dacă serverul răspunde — GameManager face fallback automat la boți
     this.game?.startMatch(this.selectedMode, save.data.selectedHero, Auth.displayName(this.playerName), true, room, map);
+  }
+
+  /** Cumpără + echipează gadget: server când ești logat, local altfel. */
+  private async buyGadget(heroId: string, gadgetId: string): Promise<{ ok: boolean; msg: string }> {
+    if (Auth.loggedIn && !Auth.offlineMode) {
+      try {
+        const { serverRequest } = await import('../multiplayer/NetClient');
+        const r = await serverRequest({ t: 'gadget-buy', token: Auth.token, hero: heroId, gadget: gadgetId });
+        if (r.profile) Auth.setProfile(r.profile);
+        return { ok: r.ok, msg: r.msg };
+      } catch (e) {
+        return { ok: false, msg: (e as Error).message };
+      }
+    }
+    const { gadgetById } = await import('../data/heroes');
+    const g = gadgetById(gadgetId);
+    if (!g) return { ok: false, msg: 'Gadget inexistent.' };
+    const d = save.data;
+    if (d.heroGadgets[heroId] === gadgetId) return { ok: false, msg: 'Deja echipat.' };
+    if (d.coins < g.price) return { ok: false, msg: `Îți lipsesc ${g.price - d.coins} monezi.` };
+    d.coins -= g.price;
+    d.heroGadgets[heroId] = gadgetId;
+    save.save();
+    return { ok: true, msg: `${g.name} echipat!` };
   }
 
   /** Upgrade putere erou: server când ești logat, local altfel. */
@@ -704,18 +736,22 @@ export class UI implements IGameUI {
     let body = '';
     let title = '';
     if (which === 'brawlers') {
-      title = `🦸 EROI <span style="font-size:13px">${HEROES.length} eroi • 🪙 ${prof?.coins ?? d.coins}</span>`;
+      title = `🦸 ${T('HEROES', 'EROI')} <span style="font-size:13px">${HEROES.length} • 🪙 ${prof?.coins ?? d.coins}</span>`;
       const powers = prof?.heroPower ?? d.heroPower;
       const trophies = prof?.heroTrophies ?? d.heroTrophies;
       const pwOf = (id: string) => Math.max(1, Math.min(POWER_MAX, Math.round(powers[id] ?? 1)));
       const sorted = [...HEROES].sort((a, b) => {
-        if (this.heroSort === 'trophies') return (trophies[b.id] ?? 0) - (trophies[a.id] ?? 0);
-        if (this.heroSort === 'power') return pwOf(b.id) - pwOf(a.id);
-        return RARITY_ORDER.indexOf(a.rarity) - RARITY_ORDER.indexOf(b.rarity);
+        let r: number;
+        if (this.heroSort === 'trophies') r = (trophies[b.id] ?? 0) - (trophies[a.id] ?? 0);
+        else if (this.heroSort === 'power') r = pwOf(b.id) - pwOf(a.id);
+        else r = RARITY_ORDER.indexOf(a.rarity) - RARITY_ORDER.indexOf(b.rarity);
+        if (r === 0) r = a.name.localeCompare(b.name);
+        return r * this.heroSortDir;
       });
       const segBtn = (id: 'trophies' | 'rarity' | 'power', label: string) =>
         `<button data-sort="${id}" class="${this.heroSort === id ? 'sel' : ''}">${label}</button>`;
-      body = `<div class="setrow"><label>Sortează</label><div class="seg" id="seg-sort">${segBtn('trophies', '🏆 Trofee')}${segBtn('rarity', '💎 Raritate')}${segBtn('power', '⚡ Putere')}</div></div>`
+      const dirArrow = this.heroSortDir === 1 ? '▼' : '▲';
+      body = `<div class="setrow"><label>${T('Sort', 'Sortează')}</label><div class="seg" id="seg-sort">${segBtn('trophies', T('🏆 Trophies', '🏆 Trofee'))}${segBtn('rarity', T('💎 Rarity', '💎 Raritate'))}${segBtn('power', T('⚡ Power', '⚡ Putere'))}<button data-sortdir="1" class="sel">${dirArrow}</button></div></div>`
       + `<div class="herogrid">` + sorted.map((h) => {
         const sel = d.selectedHero === h.id;
         const pw = pwOf(h.id);
@@ -728,12 +764,12 @@ export class UI implements IGameUI {
           <div class="htroph">🏆${ht}</div>
           <div class="hinf">
             <div class="nm">${h.name}</div>
-            <div class="tt" style="color:${RARITY_COLOR[h.rarity]}">${h.rarity.toUpperCase()} • ${h.kind.toUpperCase()}</div>
-            <div class="tt">${h.title}</div>
+            <div class="tt" style="color:${RARITY_COLOR[h.rarity]}">${h.rarity.toUpperCase()} • ${h.kind.toUpperCase()} • ${h.species.toUpperCase()}</div>
+            <div class="tt">${heroTitle(h)}</div>
             <div class="tt">❤️${h.hp} ⚔️${h.damage} 🏃${h.speed}</div>
           </div>
           <div class="hbtns">
-            <button class="mbtn ${sel ? 'ghost' : 'green'}" data-hero="${h.id}" ${sel ? 'disabled' : ''}>${sel ? 'ALES' : 'JOACĂ'}</button>
+            <button class="mbtn ${sel ? 'ghost' : 'green'}" data-hero="${h.id}" ${sel ? 'disabled' : ''}>${sel ? T('PICKED', 'ALES') : T('PLAY', 'JOACĂ')}</button>
             <button class="mbtn ${maxed ? 'ghost' : 'gold'}" data-upgrade="${h.id}" ${maxed ? 'disabled' : ''}>${maxed ? 'MAX' : `⬆️ 🪙${cost}`}</button>
           </div>
         </div>`;
@@ -746,9 +782,9 @@ export class UI implements IGameUI {
         const owned = Shop.owned(i.id);
         return `<div class="bcard">
           <div class="face" style="background:#${(i.color ?? 0x2d7dff).toString(16).padStart(6, '0')}33">${i.kind === 'skin' ? '🎨' : i.kind === 'emote' ? '😎' : '🪙'}</div>
-          <div class="inf"><div class="nm">${i.name}</div>
-          <div class="tt">${i.tag ?? ''} ${i.heroId ? '• pentru ' + i.heroId.toUpperCase() : ''}</div></div>
-          <button class="mbtn ${owned ? 'ghost' : 'gold'}" data-buy="${i.id}" ${owned ? 'disabled' : ''}>${owned ? 'DEȚINUT' : `${i.currency === 'coins' ? '🪙' : '💎'} ${i.price}`}</button>
+          <div class="inf"><div class="nm">${T(i.nameEn, i.name)}</div>
+          <div class="tt">${i.tag ?? ''} ${i.heroId ? '• ' + T('for ', 'pentru ') + i.heroId.toUpperCase() : ''}</div></div>
+          <button class="mbtn ${owned ? 'ghost' : 'gold'}" data-buy="${i.id}" ${owned ? 'disabled' : ''}>${owned ? T('OWNED', 'DEȚINUT') : `${i.currency === 'coins' ? '🪙' : '💎'} ${i.price}`}</button>
         </div>`;
       }).join('');
     } else if (which === 'quests') {
@@ -760,36 +796,36 @@ export class UI implements IGameUI {
         'q-super': stats.supers, 'q-stars': stats.stars,
       };
       const claimed = prof ? prof.questsClaimed : d.questsClaimed;
-      title = '📜 MISIUNI';
+      title = T('📜 QUESTS', '📜 MISIUNI');
       body = QUESTS.map((q) => {
         const prog = Math.min(q.target, qProg[q.id] ?? 0);
         const done = prof ? prog >= q.target : (d.quests[q.id] ?? 0) >= q.target;
         const isClaimed = claimed.includes(q.id);
         return `<div class="bcard"><div class="inf">
-          <div class="nm">${q.name}</div><div class="tt">${q.desc} — ${prog}/${q.target}</div>
+          <div class="nm">${T(q.nameEn, q.name)}</div><div class="tt">${T(q.descEn, q.desc)} — ${prog}/${q.target}</div>
           <div class="qbar"><div style="width:${(prog / q.target) * 100}%"></div></div>
           <div class="tt">🎁 🪙${q.rewardCoins} + ✨${q.rewardXp} XP</div></div>
-          <button class="mbtn ${done && !isClaimed ? 'green' : 'ghost'}" data-quest="${q.id}" ${!done || isClaimed ? 'disabled' : ''}>${isClaimed ? 'LUAT' : done ? 'REVENDICĂ' : `${prog}/${q.target}`}</button>
+          <button class="mbtn ${done && !isClaimed ? 'green' : 'ghost'}" data-quest="${q.id}" ${!done || isClaimed ? 'disabled' : ''}>${isClaimed ? T('CLAIMED', 'LUAT') : done ? T('CLAIM', 'REVENDICĂ') : `${prog}/${q.target}`}</button>
         </div>`;
-      }).join('') + `<div class="bcard"><div class="inf"><div class="nm">📊 Statistici</div><div class="tt">Victorii ${stats.wins} • Eliminări ${stats.kills} • Super-uri ${stats.supers} • Stele ${stats.stars}</div></div></div>`;
+      }).join('') + `<div class="bcard"><div class="inf"><div class="nm">📊 ${T('Stats', 'Statistici')}</div><div class="tt">${T('Wins', 'Victorii')} ${stats.wins} • ${T('KOs', 'Eliminări')} ${stats.kills} • ${T('Supers', 'Super-uri')} ${stats.supers} • ${T('Stars', 'Stele')} ${stats.stars}</div></div></div>`;
     } else if (which === 'modes') {
-      title = '🎮 MOD DE JOC';
+      title = T('🎮 GAME MODE', '🎮 MOD DE JOC');
       body = MODES.map((m) => {
         const sel = this.selectedMode === m.id;
         return `<div class="bcard modebig ${sel ? 'sel' : ''}">
           <div class="face">${m.icon}</div>
-          <div class="inf"><div class="nm">${m.name}</div>
-          <div class="tt">${m.desc}</div>
-          <div class="tt">${m.players} • ${m.target}</div></div>
-          <button class="mbtn ${sel ? 'ghost' : 'green'}" data-mode="${m.id}" ${sel ? 'disabled' : ''}>${sel ? 'ALES' : 'ALEGE'}</button>
+          <div class="inf"><div class="nm">${modeName(m)}</div>
+          <div class="tt">${modeDesc(m)}</div>
+          <div class="tt">${m.players} • ${modeTarget(m)}</div></div>
+          <button class="mbtn ${sel ? 'ghost' : 'green'}" data-mode="${m.id}" ${sel ? 'disabled' : ''}>${sel ? T('PICKED', 'ALES') : T('PICK', 'ALEGE')}</button>
         </div>`;
       }).join('') + `
         <div class="bcard custom ${this.lobbyRoom ? 'sel' : ''}">
           <div class="face">⚔️</div>
-          <div class="inf"><div class="nm">CAMERĂ CUSTOM</div>
-          <div class="tt">Joacă cu prietenii: alegi modul, harta și eroii. Cod de intrare.</div>
-          ${this.lobbyRoom && !this.lobbyRoom.started ? `<div class="tt">📻 Ești în camera <b>${this.lobbyRoom.code}</b></div>` : ''}</div>
-          <button class="mbtn gold" id="btn-custom">DESCHIDE</button>
+          <div class="inf"><div class="nm">${T('CUSTOM ROOM', 'CAMERĂ CUSTOM')}</div>
+          <div class="tt">${T('Play with friends: pick mode, map and heroes. Entry code.', 'Joacă cu prietenii: alegi modul, harta și eroii. Cod de intrare.')}</div>
+          ${this.lobbyRoom && !this.lobbyRoom.started ? `<div class="tt">📻 ${T('You are in room', 'Ești în camera')} <b>${this.lobbyRoom.code}</b></div>` : ''}</div>
+          <button class="mbtn gold" id="btn-custom">${T('OPEN', 'DESCHIDE')}</button>
         </div>`;
     } else if (which === 'account') {
       const lvl = prof?.level ?? d.level;
@@ -802,84 +838,136 @@ export class UI implements IGameUI {
       const stats = prof
         ? { kills: prof.kills, wins: prof.wins, supers: prof.supers, stars: prof.stars }
         : { kills: d.kills, wins: d.wins, supers: d.supers, stars: d.stars };
-      title = '👤 CONT';
+      title = T('👤 ACCOUNT', '👤 CONT');
       const acctCard = Auth.loggedIn && Auth.profile
-        ? `<div class="bcard sel"><div class="face">🟢</div><div class="inf"><div class="nm">${Auth.profile.name}</div><div class="tt">Cont conectat • progres salvat pe server</div></div><button class="mbtn ghost" id="btn-logout">Ieși</button></div>`
-        : `<div class="bcard"><div class="face">⚪</div><div class="inf"><div class="nm">Mod offline</div><div class="tt">Progresul e doar pe acest device.</div></div><button class="mbtn green" id="btn-login">Cont</button></div>`;
+        ? `<div class="bcard sel"><div class="face">🟢</div><div class="inf"><div class="nm">${Auth.profile.name}</div><div class="tt">${T('Account connected • progress saved on server', 'Cont conectat • progres salvat pe server')}</div></div><button class="mbtn ghost" id="btn-logout">${T('Log out', 'Ieși')}</button></div>`
+        : `<div class="bcard"><div class="face">⚪</div><div class="inf"><div class="nm">${T('Offline mode', 'Mod offline')}</div><div class="tt">${T('Progress stays on this device only.', 'Progresul e doar pe acest device.')}</div></div><button class="mbtn green" id="btn-login">${T('Account', 'Cont')}</button></div>`;
       body = acctCard + `
         <div class="bcard"><div class="face">🦊</div><div class="inf">
           <div class="nm">${nm}</div>
-          <div class="tt">Nv ${lvl} • ✨ ${xp}/${need} XP</div>
+          <div class="tt">${T('Lv', 'Nv')} ${lvl} • ✨ ${xp}/${need} XP</div>
           <div class="qbar"><div style="width:${Math.min(100, (xp / need) * 100)}%"></div></div>
-          <div class="tt">🏆 ${troph} trofee • 🪙 ${coinsV} • 💎 ${gemsV}</div>
+          <div class="tt">🏆 ${troph} ${T('trophies', 'trofee')} • 🪙 ${coinsV} • 💎 ${gemsV}</div>
         </div></div>
-        <div class="bcard"><div class="inf"><div class="nm">📊 Statistici cont</div>
+        <div class="bcard"><div class="inf"><div class="nm">📊 ${T('Account stats', 'Statistici cont')}</div>
           <div class="statgrid">
-            <div>🏆<b>${troph}</b>trofee</div>
-            <div>👑<b>${stats.wins}</b>victorii</div>
-            <div>💀<b>${stats.kills}</b>eliminări</div>
-            <div>💥<b>${stats.supers}</b>super-uri</div>
-            <div>⭐<b>${stats.stars}</b>stele</div>
-            <div>✨<b>${lvl}</b>nivel</div>
+            <div>🏆<b>${troph}</b>${T('trophies', 'trofee')}</div>
+            <div>👑<b>${stats.wins}</b>${T('wins', 'victorii')}</div>
+            <div>💀<b>${stats.kills}</b>${T('KOs', 'eliminări')}</div>
+            <div>💥<b>${stats.supers}</b>${T('supers', 'super-uri')}</div>
+            <div>⭐<b>${stats.stars}</b>${T('stars', 'stele')}</div>
+            <div>✨<b>${lvl}</b>${T('level', 'nivel')}</div>
           </div>
         </div></div>
-        <div class="setrow"><button class="mbtn ghost" id="btn-name" style="width:100%">✏️ Schimbă numele (${this.playerName})</button></div>`;
+        <div class="setrow"><button class="mbtn ghost" id="btn-name" style="width:100%">✏️ ${T('Change name', 'Schimbă numele')} (${this.playerName})</button></div>`;
+    } else if (which === 'hero') {
+      const h = HEROES.find((x) => x.id === this.heroDetail) ?? HEROES[0];
+      const powers = prof?.heroPower ?? d.heroPower;
+      const trophies = prof?.heroTrophies ?? d.heroTrophies;
+      const gadgets = prof?.heroGadgets ?? d.heroGadgets;
+      const pw = Math.max(1, Math.min(POWER_MAX, Math.round(powers[h.id] ?? 1)));
+      const maxed = pw >= POWER_MAX;
+      const cost = maxed ? 0 : (UPGRADE_COST[pw] ?? 0);
+      const sel = d.selectedHero === h.id;
+      const eq = gadgets[h.id];
+      const hpP = Math.round(h.hp * (1 + 0.055 * (pw - 1)));
+      const dmgP = Math.round(h.damage * (1 + 0.075 * (pw - 1)));
+      title = `${HERO_FACE[h.id] ?? '🦸'} ${h.name}`;
+      const pips = Array.from({ length: POWER_MAX }, (_, i) =>
+        `<span class="ppip ${i < pw ? 'on' : ''}"></span>`).join('');
+      body = `
+        <div class="herodetail" style="--rc:${RARITY_COLOR[h.rarity]}">
+          <div class="hd-face" style="background:linear-gradient(160deg,#${h.color.toString(16).padStart(6, '0')}66,#${h.color.toString(16).padStart(6, '0')}22)">${HERO_FACE[h.id] ?? '🦸'}</div>
+          <div class="hd-side">
+            <div class="nm" style="color:${RARITY_COLOR[h.rarity]}">${h.name}</div>
+            <div class="tt">${heroTitle(h)}</div>
+            <div class="tt">${h.rarity.toUpperCase()} • ${h.species.toUpperCase()} • ${h.kind.toUpperCase()}</div>
+            <div class="tt">🏆 ${trophies[h.id] ?? 0} ${T('trophies', 'trofee')}</div>
+            <div class="story">${heroDesc(h)}</div>
+          </div>
+        </div>
+        <div class="statgrid big">
+          <div>❤️<b>${hpP}</b>${T('health', 'viață')}</div>
+          <div>⚔️<b>${dmgP}×${h.projectiles}</b>${T('attack', 'atac')}</div>
+          <div>💥<b>${h.superDamage}</b>${T('super', 'super')}</div>
+          <div>🔫<b>${h.ammoMax}</b>${T('ammo', 'gloanțe')}</div>
+          <div>🏃<b>${h.speed}</b>${T('speed', 'viteză')}</div>
+          <div>📏<b>${h.range}</b>${T('range', 'rază')}</div>
+        </div>
+        <div class="bcard"><div class="inf"><div class="nm">⚡ ${T('POWER', 'PUTERE')} ${pw} <span class="tt">/ ${POWER_MAX}</span></div>
+        <div class="ppips">${pips}</div></div>
+        <button class="mbtn ${maxed ? 'ghost' : 'gold'}" data-upgrade="${h.id}" ${maxed ? 'disabled' : ''}>${maxed ? 'MAX' : `⬆️ 🪙${cost}`}</button></div>
+        <div class="modes-label">${T('GADGETS (passive abilities)', 'GADGETURI (abilități pasive)')}</div>
+        ${GADGETS.map((g) => {
+          const owned = eq === g.id;
+          return `<div class="bcard ${owned ? 'sel' : ''}"><div class="face">${g.icon}</div>
+          <div class="inf"><div class="nm">${gadgetName(g)}</div><div class="tt">${gadgetDesc(g)}</div></div>
+          <button class="mbtn ${owned ? 'ghost' : 'gold'}" data-gadget="${h.id}:${g.id}" ${owned ? 'disabled' : ''}>${owned ? T('EQUIPPED', 'ECHIPAT') : `🪙${g.price}`}</button></div>`;
+        }).join('')}
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="mbtn ${sel ? 'ghost' : 'green'}" id="hero-select" style="flex:1" ${sel ? 'disabled' : ''}>${sel ? T('SELECTED', 'SELECTAT') : T('SELECT', 'SELECTEAZĂ')}</button>
+          <button class="mbtn gold" id="hero-try" style="flex:1">🎯 ${T('TRY', 'ÎNCEARCĂ')}</button>
+        </div>`;
     } else if (which === 'settings') {
-      title = '⚙️ SETĂRI';
+      title = T('⚙️ SETTINGS', '⚙️ SETĂRI');
       const s = settings.data;
       body = `
-        <div class="setrow"><label>Calitate grafică</label><div class="seg" id="seg-q">
-          ${(['low', 'medium', 'high'] as const).map((q) => `<button data-q="${q}" class="${s.quality === q ? 'sel' : ''}">${q === 'low' ? 'Joasă' : q === 'medium' ? 'Medie' : 'Înaltă'}</button>`).join('')}
+        <div class="setrow"><label>${T('Language / Limbă', 'Limbă / Language')}</label><div class="seg" id="seg-lang">
+          <button data-l="en" class="${s.lang === 'en' ? 'sel' : ''}">EN</button>
+          <button data-l="ro" class="${s.lang === 'ro' ? 'sel' : ''}">RO</button>
         </div></div>
-        <div class="setrow"><label>FPS maxim <span style="font-weight:400">(${perf.fps} acum)</span></label><div class="seg" id="seg-fps">
+        <div class="setrow"><label>${T('Graphics quality', 'Calitate grafică')}</label><div class="seg" id="seg-q">
+          ${(['low', 'medium', 'high'] as const).map((q) => `<button data-q="${q}" class="${s.quality === q ? 'sel' : ''}">${q === 'low' ? T('Low', 'Joasă') : q === 'medium' ? T('Med', 'Medie') : T('High', 'Înaltă')}</button>`).join('')}
+        </div></div>
+        <div class="setrow"><label>${T('Max FPS', 'FPS maxim')} <span style="font-weight:400">(${perf.fps} ${T('now', 'acum')})</span></label><div class="seg" id="seg-fps">
           ${([30, 60, 90, 120] as const).map((f) => `<button data-f="${f}" class="${s.fpsTarget === f ? 'sel' : ''}">${f}</button>`).join('')}
         </div>
-        <div class="tt" style="font-size:11px;color:var(--dim);margin-top:6px">Jocul nu poate depăși refresh-ul ecranului (60/90/120Hz, după telefon).</div></div>
-        <div class="setrow"><label>Volum general <span id="v-master">${Math.round(s.master * 100)}%</span></label>
+        <div class="tt" style="font-size:11px;color:var(--dim);margin-top:6px">${T('The game cannot exceed your screen refresh rate (60/90/120Hz).', 'Jocul nu poate depăși refresh-ul ecranului (60/90/120Hz, după telefon).')}</div></div>
+        <div class="setrow"><label>${T('Master volume', 'Volum general')} <span id="v-master">${Math.round(s.master * 100)}%</span></label>
           <input type="range" id="r-master" min="0" max="100" value="${s.master * 100}"></div>
-        <div class="setrow"><label>Muzică <span id="v-music">${Math.round(s.music * 100)}%</span></label>
+        <div class="setrow"><label>${T('Music', 'Muzică')} <span id="v-music">${Math.round(s.music * 100)}%</span></label>
           <input type="range" id="r-music" min="0" max="100" value="${s.music * 100}"></div>
-        <div class="setrow"><label>Efecte <span id="v-sfx">${Math.round(s.sfx * 100)}%</span></label>
+        <div class="setrow"><label>${T('Effects', 'Efecte')} <span id="v-sfx">${Math.round(s.sfx * 100)}%</span></label>
           <input type="range" id="r-sfx" min="0" max="100" value="${s.sfx * 100}"></div>
-        <div class="setrow"><label>Sensibilitate țintire <span>${s.sensitivity.toFixed(1)}</span></label>
+        <div class="setrow"><label>${T('Aim sensitivity', 'Sensibilitate țintire')} <span>${s.sensitivity.toFixed(1)}</span></label>
           <input type="range" id="r-sens" min="50" max="200" value="${s.sensitivity * 100}"></div>
-        <div class="setrow"><label>Mărime joystick <span>${Math.round(s.joystickSize * 100)}%</span></label>
+        <div class="setrow"><label>${T('Joystick size', 'Mărime joystick')} <span>${Math.round(s.joystickSize * 100)}%</span></label>
           <input type="range" id="r-joy" min="80" max="140" value="${s.joystickSize * 100}"></div>
-        <div class="setrow togglerow">Auto-aim <div class="toggle ${s.autoAim ? 'on' : ''}" id="t-aim"></div></div>
-        <div class="setrow togglerow">Vibrații <div class="toggle ${s.vibration ? 'on' : ''}" id="t-vib"></div></div>
-        <div class="setrow togglerow">Afișează FPS/ping <div class="toggle ${s.showPerf ? 'on' : ''}" id="t-perf"></div></div>
-        <div class="setrow"><button class="mbtn ghost" id="btn-name">✏️ Schimbă numele (${this.playerName})</button></div>
-        <div class="setrow togglerow">Versiune <span style="color:var(--dim)">v${APP_VERSION}</span></div>
-        <div class="setrow"><button class="mbtn green" id="btn-update" style="width:100%">⬇️ Verifică actualizări</button>
+        <div class="setrow togglerow">${T('Auto-aim', 'Auto-aim')} <div class="toggle ${s.autoAim ? 'on' : ''}" id="t-aim"></div></div>
+        <div class="setrow togglerow">${T('Vibration', 'Vibrații')} <div class="toggle ${s.vibration ? 'on' : ''}" id="t-vib"></div></div>
+        <div class="setrow togglerow">${T('Show FPS/ping', 'Afișează FPS/ping')} <div class="toggle ${s.showPerf ? 'on' : ''}" id="t-perf"></div></div>
+        <div class="setrow"><button class="mbtn ghost" id="btn-name">✏️ ${T('Change name', 'Schimbă numele')} (${this.playerName})</button></div>
+        <div class="setrow togglerow">${T('Version', 'Versiune')} <span style="color:var(--dim)">v${APP_VERSION}</span></div>
+        <div class="setrow"><button class="mbtn green" id="btn-update" style="width:100%">⬇️ ${T('Check for updates', 'Verifică actualizări')}</button>
         <div class="tt" id="update-status" style="font-size:12px;color:var(--dim);margin-top:6px">Actualizări automate din GitHub Releases.</div></div>`;
     } else if (which === 'friends') {
-      title = '👥 PRIETENI';
+      title = T('👥 FRIENDS', '👥 PRIETENI');
       if (!Auth.loggedIn || Auth.offlineMode) {
-        body = `<div class="bcard"><div class="inf"><div class="nm">Necesită cont</div><div class="tt">Intră în cont ca să adaugi prieteni și să joci împreună.</div></div><button class="mbtn green" id="btn-login">Cont</button></div>`;
+        body = `<div class="bcard"><div class="inf"><div class="nm">${T('Account required', 'Necesită cont')}</div><div class="tt">${T('Log in to add friends and play together.', 'Intră în cont ca să adaugi prieteni și să joci împreună.')}</div></div><button class="mbtn green" id="btn-login">${T('Account', 'Cont')}</button></div>`;
       } else {
         const fr = (f: FriendEntry) => `
           <div class="bcard"><div class="face">${f.online ? '🟢' : '⚪'}</div>
           <div class="inf"><div class="nm">${f.name}</div>
-          <div class="tt">Nv ${f.level} • 🏆 ${f.trophies} ${f.online ? '• online' : '• offline'}</div></div>
-          ${f.online && this.lobbyRoom && !this.lobbyRoom.started ? `<button class="mbtn gold" data-invite="${f.name}">INVITĂ</button>` : ''}
+          <div class="tt">${T('Lv', 'Nv')} ${f.level} • 🏆 ${f.trophies} ${f.online ? T('• online', '• online') : T('• offline', '• offline')}</div></div>
+          ${f.online && this.lobbyRoom && !this.lobbyRoom.started ? `<button class="mbtn gold" data-invite="${f.name}">${T('INVITE', 'INVITĂ')}</button>` : ''}
           <button class="mbtn ghost" data-unfriend="${f.name}">✕</button></div>`;
         body = `
           <div class="setrow" style="display:flex;gap:8px">
-            <input class="ainput" id="friend-name" placeholder="Numele prietenului…" maxlength="14" style="flex:1;margin:0">
-            <button class="mbtn green" id="friend-add">＋ ADAUGĂ</button>
+            <input class="ainput" id="friend-name" placeholder="${T("Friend's name…", 'Numele prietenului…')}" maxlength="14" style="flex:1;margin:0">
+            <button class="mbtn green" id="friend-add">＋ ${T('ADD', 'ADAUGĂ')}</button>
           </div>
-          ${this.friendIncoming.length > 0 ? `<div class="modes-label">CERERI PRIMITE</div>` + this.friendIncoming.map((f) => `
+          ${this.friendIncoming.length > 0 ? `<div class="modes-label">${T('INCOMING REQUESTS', 'CERERI PRIMITE')}</div>` + this.friendIncoming.map((f) => `
             <div class="bcard sel"><div class="face">📨</div>
-            <div class="inf"><div class="nm">${f.name}</div><div class="tt">Nv ${f.level} vrea să fiți prieteni</div></div>
-            <button class="mbtn green" data-accept="${f.name}">ACCEPTĂ</button>
+            <div class="inf"><div class="nm">${f.name}</div><div class="tt">${T('Lv', 'Nv')} ${f.level} ${T('wants to be friends', 'vrea să fiți prieteni')}</div></div>
+            <button class="mbtn green" data-accept="${f.name}">${T('ACCEPT', 'ACCEPTĂ')}</button>
             <button class="mbtn ghost" data-decline="${f.name}">✕</button></div>`).join('') : ''}
-          <div class="modes-label">PRIETENII MEI (${this.friendList.length})</div>
-          ${this.friendList.length > 0 ? this.friendList.map(fr).join('') : '<div class="tt" style="margin-bottom:8px">Niciun prieten încă. Adaugă după nume!</div>'}
-          ${this.friendOutgoing.length > 0 ? `<div class="modes-label">CERERI TRIMISE</div><div class="tt">${this.friendOutgoing.join(', ')}</div>` : ''}
+          <div class="modes-label">${T('MY FRIENDS', 'PRIETENII MEI')} (${this.friendList.length})</div>
+          ${this.friendList.length > 0 ? this.friendList.map(fr).join('') : `<div class="tt" style="margin-bottom:8px">${T('No friends yet. Add by name!', 'Niciun prieten încă. Adaugă după nume!')}</div>`}
+          ${this.friendOutgoing.length > 0 ? `<div class="modes-label">${T('SENT REQUESTS', 'CERERI TRIMISE')}</div><div class="tt">${this.friendOutgoing.join(', ')}</div>` : ''}
           <div class="bcard custom" style="margin-top:10px"><div class="face">⚔️</div>
-          <div class="inf"><div class="nm">CAMERĂ CUSTOM</div>
-          <div class="tt">${this.lobbyRoom && !this.lobbyRoom.started ? `Ești în camera <b>${this.lobbyRoom.code}</b>` : 'Creează o cameră și invită-ți prietenii.'}</div></div>
-          <button class="mbtn gold" id="btn-custom">DESCHIDE</button></div>`;
+          <div class="inf"><div class="nm">${T('CUSTOM ROOM', 'CAMERĂ CUSTOM')}</div>
+          <div class="tt">${this.lobbyRoom && !this.lobbyRoom.started ? `${T('You are in room', 'Ești în camera')} <b>${this.lobbyRoom.code}</b>` : T('Create a room and invite your friends.', 'Creează o cameră și invită-ți prietenii.')}</div></div>
+          <button class="mbtn gold" id="btn-custom">${T('OPEN', 'DESCHIDE')}</button></div>`;
       }
       body = `<div id="friends-page" style="display:contents">${body}</div>`;
     }
@@ -941,10 +1029,58 @@ export class UI implements IGameUI {
         this.openPage('quests');
       });
     });
-    // setări bindings
+    // click pe card erou (nu pe butoane) → preview detaliat
+    page.querySelectorAll('.hcard').forEach((card) => {
+      card.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).closest('button')) return;
+        audio.sfx('ui');
+        this.heroDetail = (card.querySelector('[data-hero]') as HTMLElement | null)?.dataset.hero ?? null;
+        if (this.heroDetail) {
+          page.remove();
+          this.openPage('hero');
+        }
+      });
+    });
+    page.querySelector('#hero-select')?.addEventListener('click', () => {
+      if (!this.heroDetail) return;
+      audio.sfx('select');
+      save.data.selectedHero = this.heroDetail;
+      save.save();
+      page.remove();
+      this.openPage('brawlers');
+    });
+    page.querySelector('#hero-try')?.addEventListener('click', () => {
+      if (!this.heroDetail) return;
+      audio.sfx('ui');
+      save.data.selectedHero = this.heroDetail;
+      save.save();
+      page.remove();
+      this.beginMatch('training');
+    });
+    page.querySelectorAll('[data-gadget]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const [hid, gid] = (b as HTMLElement).dataset.gadget!.split(':');
+        (b as HTMLButtonElement).disabled = true;
+        const r = await this.buyGadget(hid, gid);
+        audio.sfx(r.ok ? 'upgrade' : 'denied');
+        this.toast(r.msg);
+        page.remove();
+        this.openPage('hero');
+      });
+    });
     page.querySelectorAll('#seg-sort button').forEach((b) => {
       b.addEventListener('click', () => {
-        this.heroSort = (b as HTMLElement).dataset.sort as 'trophies' | 'rarity' | 'power';
+        const el = b as HTMLElement;
+        if (el.dataset.sortdir !== undefined) {
+          this.heroSortDir = this.heroSortDir === 1 ? -1 : 1;
+        } else {
+          const s = el.dataset.sort as 'trophies' | 'rarity' | 'power';
+          if (this.heroSort === s) this.heroSortDir = this.heroSortDir === 1 ? -1 : 1;
+          else {
+            this.heroSort = s;
+            this.heroSortDir = 1;
+          }
+        }
         audio.sfx('click');
         page.remove();
         this.openPage('brawlers');
@@ -956,7 +1092,7 @@ export class UI implements IGameUI {
         const btn = b as HTMLButtonElement;
         btn.disabled = true;
         const r = await this.upgradeHero(hid);
-        audio.sfx(r.ok ? 'coin' : 'hurt');
+        audio.sfx(r.ok ? 'upgrade' : 'denied');
         this.toast(r.msg);
         page.remove();
         this.openPage('brawlers');
@@ -988,10 +1124,20 @@ export class UI implements IGameUI {
     page.querySelector('#btn-custom')?.addEventListener('click', () => {
       audio.sfx('ui');
       if (!Auth.loggedIn || Auth.offlineMode) {
-        this.toast('Intră în cont pentru camere custom.');
+        this.toast(T('Log in for custom rooms.', 'Intră în cont pentru camere custom.'));
         return;
       }
       this.openCustomLobby();
+    });
+    page.querySelectorAll('#seg-lang button').forEach((b) => {
+      b.addEventListener('click', () => {
+        settings.data.lang = (b as HTMLElement).dataset.l as 'en' | 'ro';
+        settings.save();
+        audio.sfx('click');
+        page.remove();
+        this.openPage('settings');
+        this.renderMenu();
+      });
     });
     page.querySelectorAll('#seg-q button').forEach((b) => {
       b.addEventListener('click', () => {
@@ -1127,7 +1273,7 @@ export class UI implements IGameUI {
             : '🌐 Am deschis pagina release-ului în browser.'
         );
       } catch {
-        this.toast('⚠️ Nu am putut porni descărcarea.');
+        this.toast(T('⚠️ Could not start the download.', '⚠️ Nu am putut porni descărcarea.'));
       }
       ov.remove();
     });
@@ -1138,10 +1284,10 @@ export class UI implements IGameUI {
     this.game?.setPaused(true);
     const ov = document.createElement('div');
     ov.className = 'overlay';
-    ov.innerHTML = `<div class="end-box"><h1>⏸ PAUZĂ</h1>
+    ov.innerHTML = `<div class="end-box"><h1>⏸ ${T('PAUSED', 'PAUZĂ')}</h1>
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
-      <button class="mbtn green" id="p-resume">Continuă</button>
-      <button class="mbtn ghost" id="p-quit">Ieși din meci</button></div></div>`;
+      <button class="mbtn green" id="p-resume">${T('Resume', 'Continuă')}</button>
+      <button class="mbtn ghost" id="p-quit">${T('Quit match', 'Ieși din meci')}</button></div></div>`;
     this.root.appendChild(ov);
     ov.querySelector('#p-resume')?.addEventListener('click', () => {
       this.game?.setPaused(false);
@@ -1193,6 +1339,7 @@ export class UI implements IGameUI {
       const ss = Math.floor(s.time % 60).toString().padStart(2, '0');
       score.textContent = `${s.scoreA} : ${s.scoreB} • ${mm}:${ss}`;
     }
+    this.root.querySelector('#lowhp')?.classList.toggle('on', s.hp / s.maxHp < 0.3 && s.hp > 0);
   }
 
   killfeed(text: string) {
@@ -1216,17 +1363,24 @@ export class UI implements IGameUI {
     if (!el) return;
     if (t > 0) {
       el.style.display = 'block';
-      el.textContent = `💀 Revii în ${Math.ceil(t)}…`;
+      el.textContent = `💀 ${T('Back in', 'Revii în')} ${Math.ceil(t)}…`;
     } else {
       el.style.display = 'none';
     }
   }
 
-  banner(text: string, sub?: string) {
-    const el = this.root.querySelector('#banner') as HTMLElement | null;
+  flash(color: string) {
+    const f = document.createElement('div');
+    f.className = 'screenflash';
+    f.style.background = color;
+    this.root.appendChild(f);
+    window.setTimeout(() => f.remove(), 450);
+  }
+
+  banner(text: string, sub?: string) {    const el = this.root.querySelector('#banner') as HTMLElement | null;
     if (!el) return;
     el.style.display = 'block';
-    el.style.color = text === 'VICTORIE!' ? 'var(--lime)' : 'var(--red)';
+    el.style.color = text === 'VICTORIE!' || text === 'VICTORY!' ? 'var(--lime)' : 'var(--red)';
     el.innerHTML = `${text}${sub ? `<small>${sub}</small>` : ''}`;
   }
 
@@ -1239,14 +1393,14 @@ export class UI implements IGameUI {
     ov.innerHTML = `<div class="end-box">
       <h1 class="${o.won ? 'win' : 'lose'}">${o.title}</h1>
       <div style="color:var(--dim);font-size:13px;margin-top:4px">${o.reason}</div>
-      ${o.starPlayer ? '<div style="margin-top:6px">⭐ JUCĂTORUL MECIULUI! ⭐</div>' : ''}
+      ${o.starPlayer ? `<div style="margin-top:6px">⭐ ${T('STAR PLAYER!', 'JUCĂTORUL MECIULUI!')} ⭐</div>` : ''}
       <div class="rewards">
         <div class="rew">💀 ${o.kills}</div>
         <div class="rew">🪙 +${o.coins}</div>
         <div class="rew">✨ +${o.xp}</div>
         <div class="rew">🏆 ${o.trophies}</div>
       </div>
-      <button class="mbtn green" id="end-lobby" style="width:100%">Înapoi în lobby</button>
+      <button class="mbtn green" id="end-lobby" style="width:100%">${T('Back to lobby', 'Înapoi în lobby')}</button>
     </div>`;
     this.root.appendChild(ov);
     ov.querySelector('#end-lobby')?.addEventListener('click', () => {

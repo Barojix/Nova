@@ -133,7 +133,25 @@ html, body {
 .hbtns { display: flex; gap: 6px; padding: 6px 8px 8px; }
 .hbtns .mbtn { flex: 1; padding: 6px 4px; font-size: 11px; }
 
-/* ---------- prieteni / lobby ---------- */
+/* ---------- preview erou ---------- */
+.herodetail {
+  display: flex; gap: 12px; background: var(--panel2);
+  border: 2px solid var(--rc, var(--line)); border-radius: 18px;
+  padding: 12px; margin-bottom: 10px;
+}
+.hd-face {
+  flex: none; width: 130px; min-height: 150px; border-radius: 14px;
+  font-size: 84px; display: flex; align-items: center; justify-content: center;
+}
+.hd-side { flex: 1; min-width: 0; }
+.hd-side .nm { font-weight: 900; font-size: 22px; letter-spacing: 1px; }
+.hd-side .tt { font-size: 12px; color: var(--dim); margin-top: 2px; }
+.hd-side .story { font-size: 12px; margin-top: 8px; line-height: 1.45; }
+.statgrid.big { grid-template-columns: repeat(3, 1fr); margin-bottom: 10px; }
+.statgrid.big > div { font-size: 13px; padding: 8px 4px; }
+.ppips { display: flex; gap: 3px; margin-top: 6px; }
+.ppip { flex: 1; height: 8px; border-radius: 4px; background: #ffffff22; }
+.ppip.on { background: var(--gold); }
 .rail-btn { position: relative; }
 .rbadge {
   position: absolute; top: -6px; right: -6px; min-width: 22px; height: 22px;
@@ -161,6 +179,20 @@ html, body {
 .floater.heal { color: #3ddc84; }
 .floater.go { transform: translate(-50%, -160%) scale(1.15); opacity: 1; }
 
+/* flash ecran (super/KO) + vignetă HP mic */
+.screenflash {
+  position: absolute; inset: 0; z-index: 40; pointer-events: none;
+  opacity: 0; animation: flashA 0.45s ease-out;
+}
+@keyframes flashA { 0% { opacity: 0.45; } 100% { opacity: 0; } }
+#lowhp {
+  position: absolute; inset: 0; z-index: 7; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 55%, #ff000088 100%);
+  transition: opacity 0.4s;
+}
+#lowhp.on { opacity: 1; animation: lowpulse 1s ease-in-out infinite; }
+@keyframes lowpulse { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
+
 /* ---------- ecrane ---------- */
 .screen {
   position: absolute; inset: 0; display: flex; flex-direction: column;
@@ -182,6 +214,19 @@ html, body {
   background: transparent;
   display: grid;
   grid-template-rows: auto 1fr auto;
+}
+/* auroră animată în spatele scenei 3D (fundal meniu viu) */
+.screen.brawl::before {
+  content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(40% 35% at 20% 30%, #b15cff33 0%, transparent 70%),
+    radial-gradient(40% 35% at 80% 25%, #2d7dff33 0%, transparent 70%),
+    radial-gradient(50% 40% at 50% 85%, #ff5fa222 0%, transparent 70%);
+  animation: aurora 9s ease-in-out infinite alternate;
+}
+@keyframes aurora {
+  0% { transform: scale(1) translateX(0); opacity: 0.8; }
+  100% { transform: scale(1.15) translateX(-2%); opacity: 1; }
 }
 .b-top {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -273,12 +318,15 @@ html, body {
 /* scenă centrală 100% transparentă — eroul 3D din canvas rămâne vizibil */
 .b-stage {
   flex: 1; position: relative; min-width: 0;
-  pointer-events: none !important;
 }
+.b-stage > :not(.hero-plate) { pointer-events: none; }
 .hero-plate {
   position: absolute; top: 0; left: 50%; transform: translateX(-50%);
-  text-align: center; pointer-events: none; width: max-content; max-width: 100%;
+  text-align: center; width: max-content; max-width: 100%;
+  background: none; border: none; color: var(--txt); cursor: pointer;
+  font-family: inherit; padding: 4px 18px;
 }
+.hero-plate:active { transform: translateX(-50%) scale(0.96); }
 
 .hero-plate .hero-name {
   font-size: 20px; font-weight: 900; letter-spacing: 2px;

@@ -11,6 +11,7 @@ export type ClientMsg =
   | { t: 'shop-equip'; token: string; heroId: string; item: string }
   | { t: 'quest-claim'; token: string; quest: string }
   | { t: 'hero-upgrade'; token: string; hero: string }
+  | { t: 'gadget-buy'; token: string; hero: string; gadget: string }
   | { t: 'friend-add'; token: string; name: string }
   | { t: 'friend-accept'; token: string; name: string }
   | { t: 'friend-decline'; token: string; name: string }
@@ -65,6 +66,7 @@ export interface PublicProfile {
   questsClaimed: string[];
   heroPower: Record<string, number>;
   heroTrophies: Record<string, number>;
+  heroGadgets: Record<string, string>;
 }
 
 export interface SafeSnap { team: number; hp: number; maxHp: number; x: number; z: number }
