@@ -10,15 +10,16 @@ export interface InputState {
   mx: number; mz: number;      // mișcare -1..1
   ax: number; az: number;      // aim -1..1 (direcție)
   aiming: boolean;             // aim manual activ (drag pe stick)
+  aimSuper: boolean;           // drag-ul curent e pe stick-ul de super
   attackPressed: boolean;      // edge — consumat de game
   superPressed: boolean;       // edge
 }
 
-const TAP_RATIO = 0.3; // sub 30% din rază = tap (auto-aim)
+const TAP_RATIO = 0.45; // sub 45% din rază = tap (auto-aim), nu drag
 
 export class TouchControls {
   state: InputState = {
-    mx: 0, mz: 0, ax: 1, az: 0, aiming: false,
+    mx: 0, mz: 0, ax: 1, az: 0, aiming: false, aimSuper: false,
     attackPressed: false, superPressed: false,
   };
   private moveId: number | null = null;
@@ -127,6 +128,7 @@ export class TouchControls {
         this.state.ax = nx;
         this.state.az = ny;
         this.state.aiming = true;
+        this.state.aimSuper = isSuper;
         knob.style.transform = `translate(${nx * c.rad * 0.62}px, ${ny * c.rad * 0.62}px)`;
       }
     });
@@ -154,6 +156,7 @@ export class TouchControls {
       base.classList.remove('held');
       knob.style.transform = 'translate(0,0)';
       this.state.aiming = false;
+      this.state.aimSuper = false;
     });
   }
 
@@ -162,6 +165,7 @@ export class TouchControls {
     this.moveId = null;
     this.resetMove();
     this.state.aiming = false;
+    this.state.aimSuper = false;
     this.state.attackPressed = false;
     this.state.superPressed = false;
     this.aimedShot = false;
@@ -243,6 +247,7 @@ export class TouchControls {
   consumeSuper(): boolean {
     const v = this.state.superPressed;
     this.state.superPressed = false;
+    this.state.aimSuper = false;
     if (v && this.aimedSuper) {
       this.aimedSuper = false;
       this.state.aiming = false;

@@ -24,6 +24,8 @@ export interface SimFighter {
   alive: boolean;
   respawnT: number;
   reloadT: number;
+  ammo: number;       // gloanțe curente (max 3, ca în hero brawlere)
+  ammoT: number;      // timer regenerare 1 glonț
   superCharge: number;
   superReady: boolean;
   supersUsed: number;
@@ -161,6 +163,7 @@ export class Match {
         team: s.team, isBot: s.isBot, isLocal: !!s.isLocal,
         x: sp.x, z: sp.z, facing: 0,
         hp: def.hp, alive: true, respawnT: 0, reloadT: 0,
+        ammo: 3, ammoT: 0,
         superCharge: 0, superReady: false, supersUsed: 0,
         kills: 0, deaths: 0, stars: 0,
         power: Math.max(1, Math.min(11, Math.round(s.power ?? 1))),
@@ -233,20 +236,31 @@ export class Match {
         continue;
       }
       f.reloadT -= dt;
+      // regenerare ammo: 1 glonț per ciclu de reload (max 3)
+      if (f.ammo < 3) {
+        f.ammoT += dt;
+        if (f.ammoT >= f.def.reloadMs / 1000) {
+          f.ammoT = 0;
+          f.ammo++;
+        }
+      }
       const inp = inputs.get(f.id);
       if (inp) {
         const l = Math.hypot(inp.mx, inp.mz);
+        const wantFire = inp.attack && f.reloadT <= 0 && f.ammo > 0;
+        const wantSuper = inp.super && f.superReady;
         if (l > 0.12) {
           const sp = f.def.speed * Math.min(1, l);
           const p = collide(this.walls, half, f.x + inp.mx * sp * dt, f.z + inp.mz * sp * dt, WALL_PAD);
           f.x = p.x; f.z = p.z;
-          if (Math.hypot(inp.ax, inp.az) < 0.1) f.facing = Math.atan2(inp.mx, inp.mz);
-        }
-        if (Math.hypot(inp.ax, inp.az) > 0.15) {
+          // eroul se uită unde MERGE (nu după aim)
+          f.facing = Math.atan2(inp.mx, inp.mz);
+        } else if ((wantFire || wantSuper) && Math.hypot(inp.ax, inp.az) > 0.15) {
+          // doar în momentul focului se orientează spre țintă
           f.facing = Math.atan2(inp.ax, inp.az);
         }
-        if (inp.attack && f.reloadT <= 0) this.fire(f, false);
-        if (inp.super && f.superReady) this.fire(f, true);
+        if (wantFire) this.fire(f, false);
+        if (wantSuper) this.fire(f, true);
       }
     }
 
@@ -418,6 +432,11 @@ export class Match {
   }
 
   private fire(f: SimFighter, isSuper: boolean) {
+    if (!isSuper) {
+      if (f.ammo <= 0) return;
+      f.ammo--;
+      f.ammoT = 0;
+    }
     const dx = Math.sin(f.facing), dz = Math.cos(f.facing);
     // bonus cuburi de putere (showdown): +10% damage fiecare
     const powMul = 1 + 0.1 * f.powerups;

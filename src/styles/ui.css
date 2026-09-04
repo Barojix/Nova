@@ -102,8 +102,11 @@ html, body {
 
 /* ---------- grid eroi stil Brawl ---------- */
 .herogrid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
   gap: 8px;
+}
+@media (orientation: landscape) {
+  .herogrid { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
 }
 .hcard {
   background: var(--panel2); border: 2px solid var(--rc, var(--line));
@@ -118,6 +121,11 @@ html, body {
   position: absolute; top: 4px; right: 4px; background: #000000aa;
   border: 1px solid var(--gold); color: var(--gold); font-size: 11px; font-weight: 900;
   border-radius: 999px; padding: 1px 7px;
+}
+.htroph {
+  position: absolute; top: 28px; right: 4px; background: #000000aa;
+  border: 1px solid var(--gold); color: var(--gold); font-size: 10px; font-weight: 900;
+  border-radius: 999px; padding: 1px 6px;
 }
 .hcard .hinf { padding: 6px 8px 2px; }
 .hcard .nm { font-weight: 900; font-size: 14px; }
@@ -425,7 +433,7 @@ html, body {
   background: #ffffff0d; border: 2px solid #ffffff2a;
   touch-action: none; pointer-events: auto;
 }
-.tc-stick.move { width: 140px; height: 140px; left: 18px; bottom: calc(30px + var(--sab)); opacity: 0; }
+.tc-stick.move { width: 140px; height: 140px; left: 18px; bottom: calc(30px + var(--sab)); opacity: 0.38; }
 .tc-stick.move.anchored { opacity: 1; background: #ffffff14; }
 .tc-stick.atk {
   width: 104px; height: 104px; right: 16px; bottom: calc(30px + var(--sab));
@@ -440,8 +448,10 @@ html, body {
   width: 76px; height: 76px; right: 136px; bottom: calc(112px + var(--sab));
   background: #ffffff0d; border-color: #ffffff2a; opacity: 0.55;
 }
-.tc-stick.super.ready { background: #b15cff33; border-color: #b15cff; opacity: 1;
-  box-shadow: 0 0 18px #b15cff88; }
+.tc-stick.super.ready { background: #b15cff55; border-color: #ff9f1c; opacity: 1;
+  box-shadow: 0 0 22px #ff9f1ccc, inset 0 0 12px #ff9f1c88;
+  animation: superpulse 0.9s ease-in-out infinite; }
+@keyframes superpulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
 .tc-stick.super.held { background: #b15cff55; }
 .tc-knob {
   position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px;

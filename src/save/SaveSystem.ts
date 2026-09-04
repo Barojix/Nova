@@ -7,6 +7,7 @@ export interface SaveData {
   selectedHero: string;
   unlockedHeroes: string[];
   heroPower: Record<string, number>; // heroId -> nivel putere 1-11
+  heroTrophies: Record<string, number>; // heroId -> trofee per erou
   skins: string[];        // item ids deținute
   equippedSkin: Record<string, string>; // heroId -> itemId
   quests: Record<string, number>; // questId -> progres
@@ -29,6 +30,7 @@ const DEFAULTS: SaveData = {
   selectedHero: 'volt',
   unlockedHeroes: [...HERO_IDS],
   heroPower: {},
+  heroTrophies: {},
   skins: [],
   equippedSkin: {},
   quests: {},
@@ -56,6 +58,7 @@ export class SaveSystem {
         if (!this.data.unlockedHeroes.includes(id)) this.data.unlockedHeroes.push(id);
       }
       this.data.heroPower ??= {};
+      this.data.heroTrophies ??= {};
     } catch { /* corupt -> default */ }
   }
   save() {

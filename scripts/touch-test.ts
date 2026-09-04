@@ -36,6 +36,7 @@ if (typeof PE === 'function') {
   atk.dispatchEvent(new PE('pointerdown', { pointerId: 7, clientX: cx, clientY: cy, bubbles: true }));
   atk.dispatchEvent(new PE('pointerup', { pointerId: 7, clientX: cx, clientY: cy, bubbles: true }));
   assert(tc.state.attackPressed && !tc.state.aiming, 'tap atac → attackPressed, fără aim manual');
+  assert(!tc.state.aimSuper, 'tap atac → nu e super-aim');
   assert(tc.consumeAttack() && !tc.state.aiming, 'consum tap → aiming rămâne jos');
   // DRAG pe atac → aim manual + foc la ridicare
   atk.dispatchEvent(new PE('pointerdown', { pointerId: 8, clientX: cx, clientY: cy, bubbles: true }));
@@ -51,6 +52,7 @@ if (typeof PE === 'function') {
   sup.dispatchEvent(new PE('pointerup', { pointerId: 9, clientX: 638, clientY: 138, bubbles: true }));
   assert(tc.state.superPressed, 'tap super → superPressed');
   tc.consumeSuper();
+  assert(!tc.state.aimSuper, 'consum super → aimSuper jos');
   // super gata → glow
   tc.setSuperReady(true);
   assert(sup.classList.contains('ready'), 'super ready → glow vizual');
