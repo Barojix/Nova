@@ -10,6 +10,8 @@ import { audio } from '../audio/Audio';
 import { perf } from '../core/Perf';
 import { APP_VERSION } from '../core/Version';
 import { checkForUpdate, installUpdate, type UpdateInfo } from '../updater/Updater';
+import { AppUpdater } from '../updater/AppUpdater';
+import { Capacitor } from '@capacitor/core';
 import type { GameManager, IGameUI } from '../game/GameManager';
 
 const HERO_FACE: Record<string, string> = { volt: '⚡', moss: '🌱', blip: '💜' };
@@ -25,6 +27,23 @@ export class UI implements IGameUI {
     this.playerName =
       localStorage.getItem('nova-name') || `Erou#${Math.floor(1000 + Math.random() * 9000)}`;
     localStorage.setItem('nova-name', this.playerName);
+    // Pe APK nativ: poartă de update forțat ÎNAINTE de orice (inclusiv meniu).
+    // Pe web update-ul vine singur cu refresh-ul, deci fără poartă.
+    if (Capacitor.isNativePlatform()) {
+      this.loopPerf();
+      void this.runForceCheck();
+    } else {
+      this.proceedBoot();
+      this.loopPerf();
+    }
+  }
+
+  /** Continuarea boot-ului după poarta de update (sau direct pe web). */
+  private booted = false;
+
+  private proceedBoot() {
+    if (this.booted) return;
+    this.booted = true;
     if (Auth.token && !Auth.offlineMode) {
       this.renderMenu();
       // revalidare silențioasă — token expirat => ecran de cont
@@ -38,7 +57,127 @@ export class UI implements IGameUI {
       this.showAuth();
     }
     Progression.claimDaily();
-    this.loopPerf();
+  }
+
+  // ---------- POARTĂ UPDATE FORȚAT (doar APK nativ) ----------
+  // Cât timp există versiune nouă, jocul NU pornește: descarcă singur APK-ul
+  // și deschide singur instalarea. Singurul tap rămas e confirmarea „Instalează"
+  // din ecranul de sistem Android (impus de OS, nicio aplicație n-o poate sări).
+
+  private gateTimer: number | null = null;
+
+  private gateHtml(inner: string) {
+    this.root.innerHTML = `
+    <div class="screen" id="scr-update">
+      <div class="auth-wrap upd">
+        <div class="auth-logo">⚡</div>
+        <h1 class="auth-title">STARFORGE</h1>
+        ${inner}
+      </div>
+    </div>
+    <div id="hud"></div><div id="toast"></div><div id="perf"></div>`;
+  }
+
+  private stopGatePoll() {
+    if (this.gateTimer !== null) {
+      window.clearInterval(this.gateTimer);
+      this.gateTimer = null;
+    }
+  }
+
+  private async runForceCheck() {
+    this.gateHtml(`
+      <div class="upd-status"><div class="spinner">🌀</div>
+      <div class="auth-sub">Verific actualizări…</div></div>`);
+    try {
+      const { update, info } = await checkForUpdate();
+      if (update && info) this.startForceUpdate(info);
+      else this.proceedBoot();
+    } catch {
+      // fără net / GitHub picat → intrăm offline, nu blocăm jocul la nesfârșit
+      this.proceedBoot();
+    }
+  }
+
+  private async startForceUpdate(info: UpdateInfo) {
+    this.stopGatePoll();
+    const notes = info.notes
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/\n/g, '<br>');
+    this.gateHtml(`
+      <div class="upd-badge">UPDATE OBLIGATORIU v${info.version}</div>
+      <div class="auth-sub">Se descarcă automat — nu poți juca pe versiunea veche.</div>
+      <div class="upd-notes">${notes}</div>
+      <div class="upd-bar"><div id="upd-fill"></div></div>
+      <div class="upd-pct" id="upd-pct">Pornesc descărcarea…</div>
+      <button class="mbtn green hidden" id="upd-open" style="width:100%;margin-top:10px">Deschide instalarea</button>
+      <button class="mbtn ghost hidden" id="upd-retry" style="width:100%;margin-top:8px">Reîncearcă</button>
+      <button class="mbtn ghost hidden" id="upd-skip" style="width:100%;margin-top:8px">Continuă fără update</button>`);
+    audio.sfx('ui');
+    const fill = this.root.querySelector('#upd-fill') as HTMLElement | null;
+    const pct = this.root.querySelector('#upd-pct') as HTMLElement | null;
+    const btnOpen = this.root.querySelector('#upd-open') as HTMLButtonElement | null;
+    const btnRetry = this.root.querySelector('#upd-retry') as HTMLButtonElement | null;
+    const btnSkip = this.root.querySelector('#upd-skip') as HTMLButtonElement | null;
+    const say = (t: string) => { if (pct) pct.textContent = t; };
+    const bar = (d: number, t: number) => {
+      if (fill) fill.style.width = t > 0 ? `${Math.min(100, (d / t) * 100)}%` : '8%';
+    };
+    const showEscape = (msg: string) => {
+      say(msg);
+      btnRetry?.classList.remove('hidden');
+      btnSkip?.classList.remove('hidden');
+    };
+    btnRetry?.addEventListener('click', () => {
+      audio.sfx('click');
+      void this.startForceUpdate(info);
+    });
+    btnSkip?.addEventListener('click', () => {
+      audio.sfx('click');
+      this.stopGatePoll();
+      this.toast('Joci pe versiunea veche — multiplayer-ul poate fi incompatibil.');
+      this.proceedBoot();
+    });
+    btnOpen?.addEventListener('click', () => {
+      audio.sfx('click');
+      void AppUpdater.openInstaller().catch(() => this.toast('Nu pot deschide instalarea.'));
+    });
+    // descărcarea pornește SINGURĂ, fără să întrebe
+    try {
+      await AppUpdater.downloadAndInstall({ url: info.apkUrl, title: 'Starforge' });
+    } catch {
+      showEscape('⚠️ Descărcarea n-a pornit. Verifică netul.');
+      return;
+    }
+    let opened = false;
+    this.gateTimer = window.setInterval(async () => {
+      try {
+        const p = await AppUpdater.getProgress();
+        if (p.total > 0) {
+          bar(p.downloaded, p.total);
+          const mb = (n: number) => (n / 1048576).toFixed(1);
+          say(`⬇️ ${mb(p.downloaded)} / ${mb(p.total)} MB`);
+        } else {
+          say('⬇️ Se descarcă…');
+        }
+        if (p.state === 'done' && !opened) {
+          opened = true;
+          this.stopGatePoll();
+          bar(1, 1);
+          say('✅ Descărcat! Se deschide instalarea…');
+          btnOpen?.classList.remove('hidden');
+          // installerul se deschide SINGUR (pluginul o face la final);
+          // relansăm și de aici în caz de cursă
+          try { await AppUpdater.openInstaller(); } catch { /* butonul rămâne */ }
+        } else if (p.state === 'failed') {
+          this.stopGatePoll();
+          showEscape('⚠️ Descărcarea a eșuat.');
+        }
+      } catch {
+        // poll eșuat o dată — DownloadManager continuă în fundal
+      }
+    }, 600);
   }
 
   attach(game: GameManager) {
@@ -121,63 +260,70 @@ export class UI implements IGameUI {
     const troph = prof?.trophies ?? d.trophies;
     const coins = prof?.coins ?? d.coins;
     const gems = prof?.gems ?? d.gems;
+    const mode = MODES.find((m) => m.id === this.selectedMode) ?? MODES[0];
     this.root.innerHTML = `
-    <div class="screen clear" id="scr-menu">
-      <div class="menu-header">
-        <div class="avatar ${Auth.loggedIn ? '' : 'offline'}">🦊</div>
-        <div class="pinfo">
-          <div class="pname"><span class="acc-dot ${Auth.loggedIn ? '' : 'off'}"></span>${dispName}</div>
-          <div class="plevel">Nv ${lvl} • 🏆 ${troph}</div>
-          <div class="xpbar"><div style="width:${Math.min(100, (xp / need) * 100)}%"></div></div>
+    <div class="screen brawl" id="scr-menu">
+      <div class="b-top">
+        <div class="b-tleft">
+          <button class="iconbtn" data-nav="settings" title="Setări">⚙️</button>
+          <button class="profile-card" data-nav="account">
+            <span class="lvlbadge">${lvl}</span>
+            <span class="avatar sm ${Auth.loggedIn ? '' : 'offline'}">🦊</span>
+            <span class="pinfo">
+              <span class="pname"><span class="acc-dot ${Auth.loggedIn ? '' : 'off'}"></span>${dispName}</span>
+            </span>
+          </button>
+          <div class="troph-card">🏆 ${troph}</div>
         </div>
-        <div class="cur">
+        <div class="b-tright">
           <div class="pill">🪙 ${coins}</div>
           <div class="pill">💎 ${gems}</div>
         </div>
       </div>
-      <div class="menu-left">
-        <button class="mbtn-tile" data-nav="brawlers" style="border-color:${RARITY_COLOR[hero.rarity]}">
-          <div class="ic">🦸</div><div>EROI</div>
-        </button>
-        <button class="mbtn-tile" data-nav="shop" style="border-color:var(--gold)">
-          <div class="ic">🛒</div><div>SHOP</div>
-        </button>
-        <button class="mbtn-tile" data-nav="quests" style="border-color:var(--blue)">
-          <div class="ic">📜</div><div>MISIUNI</div>
-        </button>
-        <button class="mbtn-tile" data-nav="settings" style="border-color:var(--purple)">
-          <div class="ic">⚙️</div><div>SETĂRI</div>
-        </button>
-      </div>
-      <div class="menu-center">
-        <div class="hero-name">${hero.name}</div>
-        <div class="hero-title">${hero.title}</div>
-        <div class="hero-stage">
-          <div class="hero-orb" style="border-color:${RARITY_COLOR[hero.rarity]}">${HERO_FACE[hero.id] ?? '🦸'}</div>
-          <div class="hero-podium"></div>
+      <div class="b-mid">
+        <div class="b-rail">
+          <button class="rail-btn" data-nav="brawlers" style="--rc:${RARITY_COLOR[hero.rarity]}">
+            <span class="ic">🦸</span><span>EROI</span>
+          </button>
+          <button class="rail-btn gold" data-nav="shop">
+            <span class="ic">🛒</span><span>SHOP</span>
+          </button>
         </div>
-        <div class="hero-tags">
-          <span class="tag" style="color:${RARITY_COLOR[hero.rarity]}">${hero.rarity.toUpperCase()}</span>
-          <span class="tag">❤️ ${hero.hp}</span>
-          <span class="tag">⚔️ ${hero.damage}</span>
-          <span class="tag trofeu">🏆 ${troph}</span>
-        </div>
-      </div>
-      <div class="menu-right">
-        <div class="modes-label">MODURI</div>
-        ${MODES.map((m) => `
-          <div class="mode-card ${m.id === this.selectedMode ? 'sel' : ''}" data-mode="${m.id}">
-            <div class="ic">${m.icon}</div>
-            <div class="inf">
-              <div class="nm">${m.name}</div>
-              <div class="ds">${m.players} • ${m.target}</div>
+        <div class="b-stage">
+          <div class="hero-plate">
+            <div class="hero-name">${hero.name}</div>
+            <div class="hero-title">${hero.title}</div>
+            <div class="hero-tags">
+              <span class="tag" style="color:${RARITY_COLOR[hero.rarity]}">${hero.rarity.toUpperCase()}</span>
+              <span class="tag">❤️ ${hero.hp}</span>
+              <span class="tag">⚔️ ${hero.damage}</span>
+              <span class="tag">🔋 Nv ${lvl}</span>
             </div>
-            ${m.id === this.selectedMode ? '<div class="badge">GO</div>' : ''}
-          </div>`).join('')}
+          </div>
+        </div>
+        <div class="b-rail">
+          <button class="rail-btn blue" data-nav="quests">
+            <span class="ic">📜</span><span>MISIUNI</span>
+          </button>
+          <button class="rail-btn purple" id="btn-daily">
+            <span class="ic">🎁</span><span>ZILNIC</span>
+          </button>
+        </div>
       </div>
-      <div class="play-row">
-        <button class="btn-play" id="btn-play">▶ JOACĂ</button>
-        <div class="online-row"><span class="dot off" id="net-dot"></span><span id="net-txt">Offline — boți • serverul pornește separat</span></div>
+      <div class="b-bottom">
+        <div class="xp-card">
+          <div class="xp-top"><span>✨ Nv ${lvl}</span><span>${xp}/${need}</span></div>
+          <div class="xpbar"><div style="width:${Math.min(100, (xp / need) * 100)}%"></div></div>
+        </div>
+        <button class="mode-pick" data-nav="modes">
+          <span class="ic">${mode.icon}</span>
+          <span class="inf"><span class="nm">${mode.name}</span><span class="ds">${mode.players} • ${mode.target}</span></span>
+          <span class="go">▸</span>
+        </button>
+        <div class="play-wrap">
+          <button class="btn-play" id="btn-play">PLAY</button>
+          <div class="online-row"><span class="dot off" id="net-dot"></span><span id="net-txt">Offline — boți</span></div>
+        </div>
       </div>
     </div>
     <div id="hud">
@@ -197,14 +343,12 @@ export class UI implements IGameUI {
     </div>
     <div id="toast"></div>
     <div id="perf"></div>`;
-    this.root.querySelectorAll('[data-mode]').forEach((el) => {
-      el.addEventListener('click', () => {
-        audio.sfx('click');
-        this.selectedMode = (el as HTMLElement).dataset.mode!;
-        this.renderMenu();
-      });
-    });
     this.root.querySelector('#btn-play')?.addEventListener('click', () => this.startMatchmaking());
+    this.root.querySelector('#btn-daily')?.addEventListener('click', () => {
+      const got = Progression.claimDaily();
+      audio.sfx(got ? 'coin' : 'click');
+      this.toast(got ? '🎁 Bonus zilnic: +50 🪙 +3 💎!' : '🎁 Bonusul de azi e deja luat. Revino mâine!');
+    });
     this.root.querySelectorAll('[data-nav]').forEach((el) => {
       el.addEventListener('click', () => {
         audio.sfx('ui');
@@ -377,20 +521,62 @@ export class UI implements IGameUI {
           <button class="mbtn ${done && !isClaimed ? 'green' : 'ghost'}" data-quest="${q.id}" ${!done || isClaimed ? 'disabled' : ''}>${isClaimed ? 'LUAT' : done ? 'REVENDICĂ' : `${prog}/${q.target}`}</button>
         </div>`;
       }).join('') + `<div class="bcard"><div class="inf"><div class="nm">📊 Statistici</div><div class="tt">Victorii ${stats.wins} • Eliminări ${stats.kills} • Super-uri ${stats.supers} • Stele ${stats.stars}</div></div></div>`;
+    } else if (which === 'modes') {
+      title = '🎮 MOD DE JOC';
+      body = MODES.map((m) => {
+        const sel = this.selectedMode === m.id;
+        return `<div class="bcard modebig ${sel ? 'sel' : ''}">
+          <div class="face">${m.icon}</div>
+          <div class="inf"><div class="nm">${m.name}</div>
+          <div class="tt">${m.desc}</div>
+          <div class="tt">${m.players} • ${m.target}</div></div>
+          <button class="mbtn ${sel ? 'ghost' : 'green'}" data-mode="${m.id}" ${sel ? 'disabled' : ''}>${sel ? 'ALES' : 'ALEGE'}</button>
+        </div>`;
+      }).join('');
+    } else if (which === 'account') {
+      const lvl = prof?.level ?? d.level;
+      const xp = prof?.xp ?? d.xp;
+      const need = 100 + lvl * 60 - 60;
+      const troph = prof?.trophies ?? d.trophies;
+      const coinsV = prof?.coins ?? d.coins;
+      const gemsV = prof?.gems ?? d.gems;
+      const nm = Auth.displayName(this.playerName);
+      const stats = prof
+        ? { kills: prof.kills, wins: prof.wins, supers: prof.supers, stars: prof.stars }
+        : { kills: d.kills, wins: d.wins, supers: d.supers, stars: d.stars };
+      title = '👤 CONT';
+      const acctCard = Auth.loggedIn && Auth.profile
+        ? `<div class="bcard sel"><div class="face">🟢</div><div class="inf"><div class="nm">${Auth.profile.name}</div><div class="tt">Cont conectat • progres salvat pe server</div></div><button class="mbtn ghost" id="btn-logout">Ieși</button></div>`
+        : `<div class="bcard"><div class="face">⚪</div><div class="inf"><div class="nm">Mod offline</div><div class="tt">Progresul e doar pe acest device.</div></div><button class="mbtn green" id="btn-login">Cont</button></div>`;
+      body = acctCard + `
+        <div class="bcard"><div class="face">🦊</div><div class="inf">
+          <div class="nm">${nm}</div>
+          <div class="tt">Nv ${lvl} • ✨ ${xp}/${need} XP</div>
+          <div class="qbar"><div style="width:${Math.min(100, (xp / need) * 100)}%"></div></div>
+          <div class="tt">🏆 ${troph} trofee • 🪙 ${coinsV} • 💎 ${gemsV}</div>
+        </div></div>
+        <div class="bcard"><div class="inf"><div class="nm">📊 Statistici cont</div>
+          <div class="statgrid">
+            <div>🏆<b>${troph}</b>trofee</div>
+            <div>👑<b>${stats.wins}</b>victorii</div>
+            <div>💀<b>${stats.kills}</b>eliminări</div>
+            <div>💥<b>${stats.supers}</b>super-uri</div>
+            <div>⭐<b>${stats.stars}</b>stele</div>
+            <div>✨<b>${lvl}</b>nivel</div>
+          </div>
+        </div></div>
+        <div class="setrow"><button class="mbtn ghost" id="btn-name" style="width:100%">✏️ Schimbă numele (${this.playerName})</button></div>`;
     } else {
       title = '⚙️ SETĂRI';
-      const acct = Auth.loggedIn && Auth.profile
-        ? `<div class="bcard sel"><div class="face">🟢</div><div class="inf"><div class="nm">${Auth.profile.name}</div><div class="tt">Cont conectat • Nv ${Auth.profile.level} • 🏆 ${Auth.profile.trophies}</div></div><button class="mbtn ghost" id="btn-logout">Ieși</button></div>`
-        : `<div class="bcard"><div class="face">⚪</div><div class="inf"><div class="nm">Mod offline</div><div class="tt">Progresul e doar pe acest device.</div></div><button class="mbtn green" id="btn-login">Cont</button></div>`;
       const s = settings.data;
-      body =
-        acct + `
+      body = `
         <div class="setrow"><label>Calitate grafică</label><div class="seg" id="seg-q">
           ${(['low', 'medium', 'high'] as const).map((q) => `<button data-q="${q}" class="${s.quality === q ? 'sel' : ''}">${q === 'low' ? 'Joasă' : q === 'medium' ? 'Medie' : 'Înaltă'}</button>`).join('')}
         </div></div>
-        <div class="setrow"><label>FPS maxim</label><div class="seg" id="seg-fps">
-          ${([30, 60, 120] as const).map((f) => `<button data-f="${f}" class="${s.fpsTarget === f ? 'sel' : ''}">${f}</button>`).join('')}
-        </div></div>
+        <div class="setrow"><label>FPS maxim <span style="font-weight:400">(${perf.fps} acum)</span></label><div class="seg" id="seg-fps">
+          ${([30, 60, 90, 120] as const).map((f) => `<button data-f="${f}" class="${s.fpsTarget === f ? 'sel' : ''}">${f}</button>`).join('')}
+        </div>
+        <div class="tt" style="font-size:11px;color:var(--dim);margin-top:6px">Jocul nu poate depăși refresh-ul ecranului (60/90/120Hz, după telefon).</div></div>
         <div class="setrow"><label>Volum general <span id="v-master">${Math.round(s.master * 100)}%</span></label>
           <input type="range" id="r-master" min="0" max="100" value="${s.master * 100}"></div>
         <div class="setrow"><label>Muzică <span id="v-music">${Math.round(s.music * 100)}%</span></label>
@@ -415,6 +601,15 @@ export class UI implements IGameUI {
       audio.sfx('click');
       page.remove();
       this.renderMenu();
+    });
+    page.querySelectorAll('[data-mode]').forEach((b) => {
+      b.addEventListener('click', () => {
+        this.selectedMode = (b as HTMLElement).dataset.mode!;
+        audio.sfx('click');
+        // renderMenu șterge pagina veche; redeschidem selecția cu highlight nou
+        this.renderMenu();
+        this.openPage('modes');
+      });
     });
     page.querySelectorAll('[data-hero]').forEach((b) => {
       b.addEventListener('click', () => {
@@ -468,7 +663,7 @@ export class UI implements IGameUI {
     });
     page.querySelectorAll('#seg-fps button').forEach((b) => {
       b.addEventListener('click', () => {
-        settings.data.fpsTarget = Number((b as HTMLElement).dataset.f) as 30 | 60 | 120;
+        settings.data.fpsTarget = Number((b as HTMLElement).dataset.f) as 30 | 60 | 90 | 120;
         settings.save();
         page.querySelectorAll('#seg-fps button').forEach((x) => x.classList.remove('sel'));
         b.classList.add('sel');
