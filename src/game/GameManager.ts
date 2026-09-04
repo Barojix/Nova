@@ -449,21 +449,22 @@ export class GameManager {
 
   private lastT = 0;
   private acc = 0;
+  private lastRender = 0;
 
   private frame(t: number) {
     const now = t / 1000;
     let dt = Math.min(0.1, now - (this.lastT || now));
     this.lastT = now;
     this.clock += dt;
-    perf.frame(performance.now(), this.renderer.info.render);
 
-    // cap FPS conform setări
+    // Cap FPS real conform setări: simularea rulează mereu, randarea sare
+    // când frame-ul vine prea devreme. 120 pe ecran de 60/90Hz = fiecare vsync.
     const target = settings.data.fpsTarget;
-    if (target < 120) {
-      const minFrame = 1 / (target + 5);
-      if (dt < minFrame * 0.7) {
-        // frame prea devreme — sărim randarea, dar simularea continuă la următorul
-      }
+    const nowMs = performance.now();
+    const doRender = this.lastRender <= 0 || nowMs - this.lastRender >= 1000 / target - 1.5;
+    if (doRender) {
+      this.lastRender = nowMs;
+      perf.frame(nowMs, this.renderer.info.render);
     }
 
     if (!this.paused) {
@@ -499,11 +500,11 @@ export class GameManager {
       }
       this.updateVisuals(dt);
     }
-    // cameră + randare
+    // cameră + randare (randarea poate sări conform plafonului FPS)
     this.updateCamera(dt);
     this.particles.update(dt);
     this.shake.update(dt);
-    this.renderer.render(this.scene, this.camera);
+    if (doRender) this.renderer.render(this.scene, this.camera);
   }
 
   // ----- offline sim -----

@@ -86,8 +86,7 @@ public class AppUpdaterPlugin extends Plugin {
     }
 
     @PluginMethod
-    public void downloadAndInstall(PluginCall call) {
-        String url = call.getString("url");
+    public void downloadAndInstall(PluginCall call) {        String url = call.getString("url");
         if (url == null || url.isEmpty()) {
             call.reject("lipsește url-ul APK-ului");
             return;
@@ -120,8 +119,76 @@ public class AppUpdaterPlugin extends Plugin {
         }
     }
 
-    private boolean queryComplete(DownloadManager dm, long id) {
-        Cursor c = null;
+    /**
+     * Starea descărcării pentru ecranul de update forțat (poll din JS).
+     * state: idle | downloading | done | failed (+ downloaded/total în bytes).
+     */
+    @PluginMethod
+    public void getProgress(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            if (downloadId < 0) {
+                Context ctx = getContext();
+                File apk = new File(ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), FILE_NAME);
+                if (apk.exists() && apk.length() > 1024) {
+                    ret.put("state", "done");
+                    ret.put("downloaded", apk.length());
+                    ret.put("total", apk.length());
+                } else {
+                    ret.put("state", "idle");
+                    ret.put("downloaded", 0);
+                    ret.put("total", 0);
+                }
+                call.resolve(ret);
+                return;
+            }
+            DownloadManager dm = (DownloadManager) getContext().getSystemService(Context.DOWNLOAD_SERVICE);
+            Cursor c = null;
+            try {
+                c = dm.query(new DownloadManager.Query().setFilterById(downloadId));
+                if (c != null && c.moveToFirst()) {
+                    int status = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                    long done = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
+                    long total = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
+                    ret.put("downloaded", done);
+                    ret.put("total", total);
+                    if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                        ret.put("state", "done");
+                    } else if (status == DownloadManager.STATUS_FAILED) {
+                        ret.put("state", "failed");
+                        downloadId = -1;
+                    } else {
+                        ret.put("state", "downloading");
+                    }
+                } else {
+                    ret.put("state", "idle");
+                    ret.put("downloaded", 0);
+                    ret.put("total", 0);
+                    downloadId = -1;
+                }
+            } finally {
+                if (c != null) c.close();
+            }
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("nu pot citi progresul", e);
+        }
+    }
+
+    /** Relansează intentul de instalare (dacă userul s-a întors din installer fără să instaleze). */
+    @PluginMethod
+    public void openInstaller(PluginCall call) {
+        try {
+            launchInstall();
+            JSObject ret = new JSObject();
+            ret.put("opened", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("nu pot deschide instalarea", e);
+        }
+    }
+
+    private boolean queryComplete(DownloadManager dm, long id) {        Cursor c = null;
         try {
             DownloadManager.Query q = new DownloadManager.Query().setFilterById(id);
             c = dm.query(q);

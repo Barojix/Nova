@@ -2,7 +2,7 @@ export type Quality = 'low' | 'medium' | 'high';
 
 export interface SettingsData {
   quality: Quality;
-  fpsTarget: 30 | 60 | 120;
+  fpsTarget: 30 | 60 | 90 | 120;
   master: number; // 0..1
   music: number;
   sfx: number;
@@ -17,7 +17,7 @@ const KEY = 'nova-arena-settings-v1';
 
 const DEFAULTS: SettingsData = {
   quality: 'medium',
-  fpsTarget: 60,
+  fpsTarget: 120,
   master: 0.7,
   music: 0.7,
   sfx: 0.8,
@@ -25,7 +25,7 @@ const DEFAULTS: SettingsData = {
   joystickSize: 1,
   autoAim: true,
   vibration: true,
-  showPerf: false,
+  showPerf: true,
 };
 
 export class Settings {
