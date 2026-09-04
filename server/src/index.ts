@@ -240,7 +240,7 @@ wss.on('connection', (ws: WebSocket, req) => {
         isBot: false, isLocal: false,
         x: sp.x + (Math.random() - 0.5) * 2, z: sp.z + (Math.random() - 0.5) * 4,
         facing: 0, hp: def.hp, alive: true, respawnT: 0, reloadT: 0,
-        superCharge: 0, superReady: false, kills: 0, deaths: 0, stars: 0,
+        superCharge: 0, superReady: false, supersUsed: 0, kills: 0, deaths: 0, stars: 0,
         aiT: 0, aiTx: 0, aiTz: 0, aiMode: 'fight',
       };
       m.fighters.push(f);
@@ -260,7 +260,7 @@ wss.on('connection', (ws: WebSocket, req) => {
           id: uid(), name: BOT_NAMES[i % BOT_NAMES.length], heroId: bh, def: bdef, team: bt,
           isBot: true, isLocal: false,
           x: bsp.x, z: bsp.z, facing: 0, hp: bdef.hp, alive: true,
-          respawnT: 0, reloadT: 0, superCharge: 0, superReady: false,
+          respawnT: 0, reloadT: 0, superCharge: 0, superReady: false, supersUsed: 0,
           kills: 0, deaths: 0, stars: 0, aiT: 0, aiTx: 0, aiTz: 0, aiMode: 'fight',
         });
       }
@@ -308,6 +308,25 @@ wss.on('connection', (ws: WebSocket, req) => {
     if (msg.t === 'profile') {
       const a = store.refresh(connToken);
       if (a) send(ws, { t: 'profile', profile: toPublic(a) });
+      return;
+    }
+    if (msg.t === 'shop-buy' || msg.t === 'shop-equip' || msg.t === 'quest-claim') {
+      if (!authAllowed()) {
+        send(ws, { t: 'shop-result', ok: false, msg: 'Prea multe cereri. Așteaptă.' });
+        return;
+      }
+      const a = store.refresh(msg.token);
+      if (!a) {
+        send(ws, { t: 'shop-result', ok: false, msg: 'Sesiune expirată. Conectează-te din nou.' });
+        return;
+      }
+      const r =
+        msg.t === 'shop-buy'
+          ? store.buyItem(a.id, msg.item)
+          : msg.t === 'shop-equip'
+            ? store.equipSkin(a.id, msg.heroId, msg.item)
+            : store.claimQuest(a.id, msg.quest);
+      send(ws, { t: 'shop-result', ok: r.ok, msg: r.msg, profile: r.profile });
       return;
     }
     if (msg.t === 'input' && room && player) {
@@ -370,7 +389,9 @@ setInterval(() => {
           const f = m.fighters.find((x) => x.id === p.fighterId);
           const won = f ? f.team === m.winner : false;
           if (p.accountId) {
-            const profile = store.applyMatchById(p.accountId, won, f?.kills ?? 0);
+            const profile = store.applyMatchById(
+              p.accountId, won, f?.kills ?? 0, f?.supersUsed ?? 0, f?.stars ?? 0
+            );
             send(p.ws, {
               t: 'reward',
               coins: won ? MATCH_REWARDS.winCoins : MATCH_REWARDS.loseCoins,

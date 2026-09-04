@@ -26,6 +26,7 @@ export interface SimFighter {
   reloadT: number;
   superCharge: number;
   superReady: boolean;
+  supersUsed: number;
   kills: number;
   deaths: number;
   stars: number;
@@ -146,7 +147,7 @@ export class Match {
         team: s.team, isBot: s.isBot, isLocal: !!s.isLocal,
         x: sp.x, z: sp.z, facing: 0,
         hp: def.hp, alive: true, respawnT: 0, reloadT: 0,
-        superCharge: 0, superReady: false,
+        superCharge: 0, superReady: false, supersUsed: 0,
         kills: 0, deaths: 0, stars: 0,
         aiT: Math.random() * 2, aiTx: 0, aiTz: 0,
         aiMode: modeId === 'training' && s.isBot ? 'dummy' : 'fight',
@@ -318,6 +319,7 @@ export class Match {
     if (isSuper) {
       f.superCharge = 0;
       f.superReady = false;
+      f.supersUsed++;
       const n = f.def.superCount;
       for (let i = 0; i < n; i++) {
         const spread = n > 1 ? (i - (n - 1) / 2) * 0.14 : 0;

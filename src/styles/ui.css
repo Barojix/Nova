@@ -1,4 +1,7 @@
-/* NOVA ARENA — UI original: navy + neon lime/violet, carduri rotunjite. */
+/* STARFORGE — UI în stil hero brawler mobil.
+   Structura: header compact sus, scenă 3D full-bleed în centru, butoane moduri
+   la dreapta, butoane rotunde (brawlers/shop/quests/settings) la stânga, buton
+   PLAY mare la baza dreapta. */
 :root {
   --bg: #0b0e1d;
   --panel: #161b36;
@@ -12,6 +15,7 @@
   --gold: #ffb020;
   --red: #ff3b6b;
   --green: #3ddc84;
+  --purple: #b15cff;
   --radius: 18px;
   --sat: env(safe-area-inset-top, 0px);
   --sab: env(safe-area-inset-bottom, 0px);
@@ -93,81 +97,180 @@ html, body {
 }
 .hidden { display: none !important; }
 
-/* header profil */
-.pheader {
-  display: flex; align-items: center; gap: 8px;
-  padding: calc(8px + var(--sat)) 12px 8px;
+/* ============================================================
+   MENIU PRINCIPAL — layout Brawl Stars
+   ============================================================ */
+#scr-menu {
+  display: grid;
+  grid-template-areas:
+    "header  header  header"
+    "left    center  right"
+    "play    play    play";
+  grid-template-rows: auto 1fr auto;
+  grid-template-columns: 110px 1fr 240px;
+  gap: 0;
+  padding: 0;
+  background: var(--bg);
+}
+@media (min-width: 760px) {
+  #scr-menu {
+    grid-template-columns: 130px 1fr 320px;
+  }
+}
+
+/* header pe o linie (stânga-sus: profil, dreapta-sus: monede) */
+.menu-header {
+  grid-area: header;
+  display: flex; align-items: center; gap: 10px;
+  padding: calc(8px + var(--sat)) 16px 8px;
+  z-index: 4;
 }
 .avatar {
-  width: 44px; height: 44px; border-radius: 14px; flex: none;
+  width: 48px; height: 48px; border-radius: 16px; flex: none;
   background: linear-gradient(135deg, var(--blue), var(--pink));
   display: flex; align-items: center; justify-content: center;
-  font-size: 24px; border: 2px solid #ffffff33;
+  font-size: 26px; border: 3px solid #ffffff33; position: relative;
 }
+.avatar::after {
+  content: ''; position: absolute; right: -2px; bottom: -2px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--green); box-shadow: 0 0 6px var(--green);
+  border: 2px solid var(--bg);
+}
+.avatar.offline::after { background: var(--dim); box-shadow: none; }
 .pinfo { flex: 1; min-width: 0; }
-.pname { font-weight: 900; font-size: 15px; }
-.plevel { font-size: 11px; color: var(--dim); }
-.xpbar { height: 6px; border-radius: 3px; background: #00000066; margin-top: 3px; overflow: hidden; }
+.pname { font-weight: 900; font-size: 15px; line-height: 1.1;
+  display: flex; align-items: center; gap: 5px; }
+.pname .acc-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+}
+.pname .acc-dot.off { background: var(--dim); box-shadow: none; }
+.plevel { font-size: 11px; color: var(--dim); font-weight: 700; }
+.xpbar { height: 5px; border-radius: 3px; background: #00000066; margin-top: 3px; overflow: hidden; max-width: 220px; }
 .xpbar > div { height: 100%; background: linear-gradient(90deg, var(--lime), var(--green)); border-radius: 3px; transition: width 0.4s; }
 .cur { display: flex; gap: 6px; }
 .pill {
   background: #00000088; border: 1px solid var(--line); border-radius: 999px;
-  padding: 5px 10px; font-weight: 800; font-size: 13px; white-space: nowrap;
+  padding: 5px 11px; font-weight: 800; font-size: 13px; white-space: nowrap;
+  display: flex; align-items: center; gap: 4px;
 }
 
-/* erou showcase */
-.hero-stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0; position: relative; }
+/* coloana stânga: 4 butoane rotunde mari ca Brawl */
+.menu-left {
+  grid-area: left;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  padding: 8px 6px 8px 12px;
+  align-content: start;
+}
+.mbtn-tile {
+  background: var(--panel2); border: 2px solid var(--line); color: var(--txt);
+  border-radius: 18px; aspect-ratio: 1; min-height: 78px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  font-weight: 900; font-size: 11px; cursor: pointer; letter-spacing: 0.5px;
+  text-align: center; padding: 4px;
+  transition: transform 0.1s, border-color 0.1s;
+}
+.mbtn-tile .ic { font-size: 26px; line-height: 1; }
+.mbtn-tile:active { transform: scale(0.94); }
+.mbtn-tile.has-badge::after {
+  content: attr(data-badge); position: absolute; top: 4px; right: 6px;
+  background: var(--red); color: #fff; font-size: 10px; font-weight: 900;
+  border-radius: 999px; padding: 1px 6px; min-width: 18px; text-align: center;
+}
+.mbtn-tile { position: relative; }
+.mbtn-tile:hover { border-color: var(--lime); }
+
+/* scenă centrală: fundal gradient, eroul în vitrina 3D pe podea */
+.menu-center {
+  grid-area: center;
+  position: relative; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+  background: radial-gradient(60% 90% at 50% 70%, #2a2470 0%, #131a45 40%, #0a0e24 100%);
+  border-top-left-radius: 24px; border-top-right-radius: 24px;
+  border: 2px solid #2a2f60; border-bottom: none;
+  overflow: hidden;
+}
+.hero-stage {
+  flex: 1; width: 100%; display: flex; align-items: center; justify-content: center;
+  position: relative; min-height: 0;
+}
 .hero-orb {
   width: 170px; height: 170px; border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #ffffff33, transparent 50%), conic-gradient(from 0deg, #2d7dff33, #b15cff33, #ff5fa233, #2d7dff33);
+  background: radial-gradient(circle at 35% 30%, #ffffff44, transparent 50%), conic-gradient(from 0deg, #2d7dff33, #b15cff33, #ff5fa233, #2d7dff33);
   border: 3px solid #ffffff22;
   display: flex; align-items: center; justify-content: center;
   font-size: 84px; animation: floaty 3s ease-in-out infinite;
   box-shadow: 0 0 60px #2d7dff55, inset 0 0 40px #00000066;
+  position: relative; z-index: 2;
 }
 @keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
-.hero-name { font-size: 30px; font-weight: 900; letter-spacing: 2px; margin-top: 10px; }
-.hero-title { color: var(--dim); font-size: 13px; font-weight: 700; }
-.hero-tags { display: flex; gap: 6px; margin-top: 8px; }
-.tag { font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 999px; background: #ffffff14; border: 1px solid var(--line); }
+.hero-podium {
+  position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+  width: 220px; height: 24px;
+  background: radial-gradient(ellipse at center, #ffffff44 0%, transparent 70%);
+  border-top: 2px solid #ffffff22;
+}
+.hero-name { position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+  font-size: 18px; font-weight: 900; letter-spacing: 2px;
+  text-shadow: 0 2px 0 #000, 0 0 10px #00000088; z-index: 3; }
+.hero-title { position: absolute; top: 30px; left: 50%; transform: translateX(-50%);
+  color: var(--dim); font-size: 11px; font-weight: 700; z-index: 3; }
+.hero-tags { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 4px; z-index: 3; }
+.tag { font-size: 10px; font-weight: 800; padding: 3px 8px; border-radius: 999px;
+  background: #00000099; border: 1px solid var(--line); }
 .trofeu { color: var(--gold); }
 
-/* moduri */
-.modes { display: flex; gap: 8px; padding: 0 12px; overflow-x: auto; }
-.mode-card {
-  flex: 1; min-width: 108px; background: var(--panel); border: 2px solid var(--line);
-  border-radius: var(--radius); padding: 10px; text-align: center; cursor: pointer;
-  transition: transform 0.12s, border-color 0.12s;
+/* coloana dreapta: lista de moduri (ca „Available modes" Brawl) */
+.menu-right {
+  grid-area: right;
+  padding: 8px 12px 8px 6px;
+  display: flex; flex-direction: column; gap: 6px;
+  align-content: start;
+  max-height: 100%; overflow-y: auto;
 }
-.mode-card.sel { border-color: var(--lime); transform: scale(1.04); background: var(--panel2); }
-.mode-card .ic { font-size: 26px; }
-.mode-card .nm { font-weight: 900; font-size: 12px; margin-top: 4px; }
-.mode-card .ds { font-size: 10px; color: var(--dim); margin-top: 2px; }
+.modes-label {
+  font-size: 10px; font-weight: 800; color: var(--dim); letter-spacing: 1px;
+  text-transform: uppercase; padding: 0 4px 2px;
+}
+.mode-card {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--panel2); border: 2px solid var(--line); border-radius: 14px;
+  padding: 8px 10px; cursor: pointer; transition: transform 0.1s, border-color 0.1s;
+  min-height: 56px;
+}
+.mode-card.sel { border-color: var(--lime); background: linear-gradient(180deg, #1a2050 0%, #131945 100%); }
+.mode-card:active { transform: scale(0.98); }
+.mode-card .ic { font-size: 26px; flex: none; width: 36px; text-align: center; }
+.mode-card .inf { flex: 1; min-width: 0; }
+.mode-card .nm { font-weight: 900; font-size: 12px; letter-spacing: 0.5px; }
+.mode-card .ds { font-size: 10px; color: var(--dim); margin-top: 1px; }
+.mode-card .badge {
+  background: var(--lime); color: #0b0e1d; font-size: 9px; font-weight: 900;
+  padding: 2px 6px; border-radius: 999px; letter-spacing: 0.5px;
+}
 
-/* buton PLAY */
-.play-row { padding: 12px; padding-bottom: calc(12px + var(--sab)); }
+/* footer: buton mare PLAY pe toata latimea */
+.play-row {
+  grid-area: play;
+  padding: 10px 16px calc(12px + var(--sab));
+  background: linear-gradient(180deg, transparent 0%, #0a0d20 60%);
+}
 .btn-play {
-  width: 100%; border: none; border-radius: 20px; padding: 16px;
-  font-size: 22px; font-weight: 900; letter-spacing: 2px; color: #0b0e1d;
+  width: 100%; border: none; border-radius: 22px; padding: 18px;
+  font-size: 24px; font-weight: 900; letter-spacing: 3px; color: #0b0e1d;
   background: linear-gradient(180deg, #d4ff4f, var(--lime) 60%, #7fbf1a);
-  box-shadow: 0 6px 0 #5a8a10, 0 10px 24px #b8f13544;
+  box-shadow: 0 6px 0 #5a8a10, 0 10px 24px #b8f13544, inset 0 1px 0 #ffffff55;
   cursor: pointer; transition: transform 0.1s;
+  text-shadow: 0 1px 0 #ffffff88;
 }
 .btn-play:active { transform: translateY(4px); box-shadow: 0 2px 0 #5a8a10; }
-.online-row { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 8px; font-size: 12px; color: var(--dim); font-weight: 700; }
-.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+.online-row { display: flex; align-items: center; justify-content: center;
+  gap: 6px; margin-top: 6px; font-size: 11px; color: var(--dim); font-weight: 700; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+  box-shadow: 0 0 8px var(--green); }
 .dot.off { background: var(--gold); box-shadow: 0 0 8px var(--gold); }
-
-/* nav jos */
-.navbar {
-  display: flex; gap: 6px; padding: 8px 12px calc(10px + var(--sab));
-  background: #0b0e1dcc; border-top: 1px solid var(--line);
-}
-.navbtn {
-  flex: 1; background: var(--panel); color: var(--txt); border: 1px solid var(--line);
-  border-radius: 14px; padding: 10px 4px; font-weight: 800; font-size: 12px; cursor: pointer;
-}
-.navbtn:active { transform: scale(0.96); }
 
 /* liste (brawleri/shop/quests) */
 .page { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); z-index: 20; animation: screenIn 0.2s; }
@@ -316,7 +419,110 @@ html, body {
 }
 #perf.on { display: block; }
 
+/* ============================================================
+   LANDSCAPE COMPACT — pe înălțimi mici (telefoane) layoutul
+   devine 2 coloane cu scenă 3D scurtă + butoane pătrate mai mici.
+   ============================================================ */
+@media (orientation: landscape) and (max-height: 540px) {
+  #scr-menu {
+    grid-template-areas:
+      "header  header"
+      "left    center"
+      "left    right"
+      "play    play";
+    grid-template-columns: 84px 1fr;
+    grid-template-rows: auto 1fr auto auto;
+  }
+  .menu-header { padding: 4px 10px; gap: 8px; }
+  .avatar { width: 32px; height: 32px; font-size: 18px; border-radius: 11px; border-width: 2px; }
+  .pname { font-size: 12px; }
+  .plevel { font-size: 9px; }
+  .xpbar { height: 4px; }
+  .pill { padding: 2px 7px; font-size: 11px; }
+  .menu-left { grid-template-columns: 1fr; padding: 6px 4px 6px 8px; gap: 5px; }
+  .mbtn-tile { min-height: 50px; font-size: 9px; }
+  .mbtn-tile .ic { font-size: 18px; }
+  .menu-center { border-radius: 14px 14px 0 0; }
+  .hero-orb { width: 96px; height: 96px; font-size: 48px; }
+  .hero-podium { width: 130px; height: 14px; }
+  .hero-name { font-size: 14px; top: 4px; }
+  .hero-title { font-size: 10px; top: 22px; }
+  .hero-tags { bottom: 1px; gap: 3px; }
+  .tag { font-size: 9px; padding: 2px 5px; }
+  .menu-right { padding: 4px 6px 4px 4px; }
+  .mode-card { min-height: 44px; padding: 5px 8px; gap: 6px; }
+  .mode-card .ic { font-size: 18px; width: 26px; }
+  .mode-card .nm { font-size: 11px; }
+  .mode-card .ds { font-size: 9px; }
+  .play-row { padding: 6px 10px 8px; }
+  .btn-play { padding: 12px; font-size: 18px; border-radius: 16px; }
+
+  /* --- auth --- */
+  .auth-wrap { padding: 14px 22px; max-width: 380px; }
+  .auth-logo { width: 52px; height: 52px; font-size: 30px; border-radius: 16px; }
+  .auth-title { font-size: 22px; letter-spacing: 3px; }
+  .auth-sub { font-size: 11px; margin: 2px 0 8px; }
+  .ainput { padding: 8px 10px; font-size: 13px; margin-bottom: 6px; }
+  .auth-wrap .btn-play { padding: 10px; font-size: 15px; }
+
+  /* --- HUD meci --- */
+  .hud-top { top: calc(5px + var(--sat)); left: 8px; right: 8px; gap: 6px; }
+  .scorebox { min-width: 70px; padding: 4px 8px; font-size: 13px; border-radius: 10px; }
+  .hpwrap { padding: 4px 8px; border-radius: 10px; }
+  .hpbar { height: 9px; }
+  .hptext { font-size: 10px; }
+  .superbar { height: 4px; margin-top: 2px; }
+  .pausebtn { padding: 5px 9px; font-size: 13px; border-radius: 10px; }
+  #killfeed { top: calc(70px + var(--sat)); left: 8px; }
+  .kf { font-size: 11px; padding: 3px 8px; }
+  #countdown { font-size: 54px; }
+  #banner { font-size: 32px; top: 26%; }
+  #respawn { font-size: 16px; bottom: 40%; }
+
+  /* controale touch — mai joase și compacte */
+  .tc-move, .tc-aim { width: 118px; height: 118px; }
+  .tc-move { left: 12px; bottom: calc(14px + var(--sab)); }
+  .tc-aim { right: 104px; bottom: calc(14px + var(--sab)); }
+  .tc-knob { width: 52px; height: 52px; margin: -26px; }
+  .tc-btns { right: 10px; bottom: calc(12px + var(--sab)); gap: 8px; }
+  .tc-btn { width: 66px; height: 66px; font-size: 22px; border-width: 2px; }
+  .tc-btn span { font-size: 8px; }
+  #toast { bottom: auto; top: 34%; font-size: 12px; }
+
+  /* --- overlay-uri --- */
+  .end-box { padding: 16px 20px; max-height: calc(100% - 30px); overflow-y: auto; }
+  .end-box h1 { font-size: 26px; }
+  .rewards { margin: 8px 0; }
+  .mm-box { padding: 12px; }
+  .spinner { font-size: 38px; }
+  .mm-box h2 { font-size: 18px; margin: 4px 0; }
+  .mm-tips { font-size: 12px; margin: 4px 0 10px; }
+
+  /* --- pagini --- */
+  .page-head { padding: calc(6px + var(--sat)) 14px 6px; }
+  .page-head h2 { font-size: 17px; }
+  .bcard { padding: 9px 12px; margin-bottom: 8px; }
+  .bcard .face { width: 48px; height: 48px; font-size: 28px; border-radius: 14px; }
+  .bcard .nm { font-size: 14px; }
+  .statgrid { grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-top: 5px; }
+  .setrow { padding: 8px 12px; margin-bottom: 6px; }
+}
+
+/* tablete landscape / desktop: pagini pe două coloane, centrate */
+@media (min-width: 760px) {
+  .page-body {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px;
+    max-width: 860px; margin: 0 auto; width: 100%; align-content: start;
+  }
+  .setrow { grid-column: span 1; }
+}
+
 @media (min-width: 700px) {
   .hero-orb { width: 210px; height: 210px; font-size: 110px; }
   .btn-play { max-width: 480px; margin: 0 auto; display: block; }
+}
+/* în compact-landscape, limitele de desktop nu se aplică */
+@media (orientation: landscape) and (max-height: 540px) and (min-width: 700px) {
+  .hero-orb { width: 92px; height: 92px; font-size: 46px; }
+  .btn-play { max-width: none; }
 }

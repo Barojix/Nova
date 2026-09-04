@@ -1,6 +1,6 @@
 {
   "name": "starforge",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "STARFORGE — hero brawler multiplayer mobil original (Three.js + TS + Capacitor)",
   "type": "module",
   "scripts": {
