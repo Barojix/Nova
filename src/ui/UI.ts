@@ -806,7 +806,7 @@ export class UI implements IGameUI {
     });
     ov.querySelector('#p-quit')?.addEventListener('click', () => {
       ov.remove();
-      this.game?.stopToMenu();
+      this.game?.toMenu(save.data.selectedHero);
       this.renderMenu();
     });
   }
@@ -909,7 +909,7 @@ export class UI implements IGameUI {
     ov.querySelector('#end-lobby')?.addEventListener('click', () => {
       audio.sfx('click');
       ov.remove();
-      this.game?.stopToMenu();
+      this.game?.toMenu(save.data.selectedHero);
       this.renderMenu();
     });
   }

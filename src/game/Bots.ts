@@ -1,8 +1,6 @@
 import { dist2d } from '../utils/math';
-import { inBush as _inBush } from '../maps/MapBuilder';
+import { canSee } from './visibility';
 import { Match, type SimFighter, type SimInput } from './Match';
-
-void _inBush;
 
 // Creier simplu dar credibil: luptă la distanță optimă, strânge stele,
 // fuge la HP mic, folosește super-ul când are țintă grupată.
@@ -18,11 +16,12 @@ export function botInput(m: Match, f: SimFighter, dt: number): SimInput {
   );
   const dummies = m.fighters.filter((e) => e.alive && e.aiMode === 'dummy');
 
-  // țintă: cel mai apropiat inamic / dummy în training
+  // țintă: cel mai apropiat inamic VIZIBIL (prin tufiș nu văd — ca în Brawl)
   let target: SimFighter | null = null;
   let best = Infinity;
   const pool = m.modeId === 'training' ? [...enemies, ...dummies] : enemies;
   for (const e of pool) {
+    if (e.aiMode !== 'dummy' && !canSee(m.map.bushes, f.x, f.z, e.x, e.z)) continue;
     const d = dist2d(f.x, f.z, e.x, e.z);
     if (d < best) { best = d; target = e; }
   }

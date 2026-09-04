@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { Match, type PlayerSpec, type SimFighter, type SimInput } from './Match';
 import { botInput } from './Bots';
-import { buildMap, inBush, type BuiltMap } from '../maps/MapBuilder';
+import { buildMap, type BuiltMap } from '../maps/MapBuilder';
+import { canSee } from './visibility';
 import { mapById } from '../data/maps';
 import { heroById } from '../data/heroes';
 import { buildHero, type HeroRig } from '../characters/HeroFactory';
@@ -106,7 +107,9 @@ export class GameManager {
     ui: IGameUI,
   ) {
     this.ui = ui;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    // AA doar pe high — pe telefon e cel mai mare consumator de baterie/GPU
+    const aa = settings.data.quality === 'high';
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: aa, powerPreference: 'high-performance' });
     this.renderer.setClearColor(0x0b0e1d);
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200);
     this.scene.background = new THREE.Color(0x0b0e1d);
@@ -141,7 +144,10 @@ export class GameManager {
   private resize() {
     const w = window.innerWidth, h = window.innerHeight;
     const scale = settings.renderScale;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * scale);
+    // plafon DPR pe calitate — fill-rate-ul e cauza #1 de încălzire pe telefon
+    const q = settings.data.quality;
+    const dprCap = q === 'low' ? 1 : q === 'medium' ? 1.5 : 2;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, dprCap) * scale);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
@@ -363,6 +369,14 @@ export class GameManager {
     audio.startMusic(false);
   }
 
+  /** Ieșire garantată în meniu: oprește meciul ȘI reconstruiește vitrina 3D. */
+  toMenu(heroId: string) {
+    this.stopToMenu();
+    this.revealUntil.clear();
+    this.hideDeb.clear();
+    this.showShowcase(heroId);
+  }
+
   setPaused(p: boolean) {
     this.paused = p;
   }
@@ -394,8 +408,9 @@ export class GameManager {
     this.remoteBullets = [];
     this.remoteStars = [];
     this.remoteOver = false;
-    this.localId = 0;
-    this.lastReward = null;
+    this.revealUntil.clear();
+    this.hideDeb.clear();
+    this.localId = 0;    this.lastReward = null;
     this.kills = 0;
     this.starsCollected = 0;
     this.supersUsed = 0;
@@ -556,6 +571,8 @@ export class GameManager {
         if (!e.alive || e.id === f.id) continue;
         if (m.modeId !== 'showdown' && e.team === f.team) continue;
         if (e.aiMode === 'dummy' && m.modeId !== 'training') continue;
+        // auto-aim nu țintește ce nu vezi (tufiș)
+        if (this.shouldHide(e)) continue;
         const d = Math.hypot(e.x - f.x, e.z - f.z);
         if (d < bd) {
           bd = d;
@@ -579,6 +596,7 @@ export class GameManager {
     const m = this.match!;
     if (e.type === 'shoot') {
       const f = m.fighters.find((x) => x.id === e.id);
+      this.revealUntil.set(e.id, this.clock + 1);
       const v = this.views.get(e.id);
       v?.rig.playAttack();
       audio.sfx('shoot');
@@ -587,6 +605,7 @@ export class GameManager {
       }
     } else if (e.type === 'super') {
       const f = m.fighters.find((x) => x.id === e.id);
+      this.revealUntil.set(e.id, this.clock + 1);
       audio.sfx('super');
       this.shake.add(0.3);
       if (f) {
@@ -665,6 +684,7 @@ export class GameManager {
     const m = this.match!;
     const local = this.localFighter();
     if (!local) return;
+    this.controls.setSuperReady(local.superReady);
     const alive = m.fighters.filter((f) => f.alive).length;
     this.ui.updateHud({
       hp: Math.max(0, local.hp), maxHp: local.def.hp,
@@ -738,6 +758,7 @@ export class GameManager {
     }
     // HUD din snapshot
     if (me) {
+      this.controls.setSuperReady(me.superReady);
       this.ui.updateHud({
         hp: Math.max(0, me.hp), maxHp: me.maxHp,
         superReady: me.superReady,
@@ -821,10 +842,11 @@ export class GameManager {
         g.position.x += (f.x - g.position.x) * k;
         g.position.z += (f.z - g.position.z) * k;
         g.rotation.y = f.facing;
-        g.visible = f.alive;
+        const hidden = this.shouldHideSnap(f);
+        g.visible = f.alive && !hidden;
         v.rig.update(dt, true, this.clock);
         this.drawBar(v, f.hp, f.maxHp);
-        v.bar.visible = f.alive;
+        v.bar.visible = f.alive && !hidden;
       }
       this.syncBullets(this.remoteBullets);
       this.syncStars(this.remoteStars);
@@ -852,11 +874,36 @@ export class GameManager {
     const local = this.localFighter();
     if (!local || f.id === local.id) return false;
     if (this.match.modeId !== 'showdown' && f.team === local.team) return false;
-    if (!inBush(this.builtMap.bushes, f.x, f.z)) return false;
-    // vizibil dacă localul e în același tufiș sau foarte aproape
-    if (inBush(this.builtMap.bushes, local.x, local.z)) return false;
-    if (Math.hypot(f.x - local.x, f.z - local.z) < 3) return false;
-    return true;
+    return this.hideWithMemory(f.id, local.x, local.z, f.x, f.z);
+  }
+
+  private shouldHideSnap(f: { id: number; team: number; x: number; z: number }): boolean {
+    if (!this.builtMap) return false;
+    const me = this.remoteFighters.get(this.localId);
+    if (!me || f.id === this.localId) return false;
+    if (this.modeId !== 'showdown' && f.team === me.team) return false;
+    return this.hideWithMemory(f.id, me.x, me.z, f.x, f.z);
+  }
+
+  /** Ascundere cu memorie: reveal 1s la foc + histereză 0.25s anti-pâlpâire. */
+  private revealUntil = new Map<number, number>();
+  private hideDeb = new Map<number, { hidden: boolean; t: number }>();
+
+  private hideWithMemory(id: number, vx: number, vz: number, tx: number, tz: number): boolean {
+    // cine trage se arată 1s (ca în Brawl)
+    if (this.clock < (this.revealUntil.get(id) ?? -1)) return false;
+    const wantHide = !canSee(this.builtMap!.bushes, vx, vz, tx, tz);
+    const st = this.hideDeb.get(id);
+    if (!st) {
+      this.hideDeb.set(id, { hidden: wantHide, t: this.clock });
+      return wantHide;
+    }
+    if (st.hidden !== wantHide) {
+      if (this.clock - st.t < 0.25) return st.hidden;
+      st.hidden = wantHide;
+      st.t = this.clock;
+    }
+    return st.hidden;
   }
 
   private syncBullets(list: { x: number; z: number; super: boolean; color: number }[]) {
@@ -931,9 +978,10 @@ export class GameManager {
       tz = v ? v.rig.group.position.z : me.z;
     }
     const sh = this.shake.offset;
-    const H = 21, BACK = 11;
+    // cameră apropiată stil Brawl (vezi ~30 unități, nu toată harta)
+    const H = 13, BACK = 7;
     this.camera.position.set(tx + sh.x, H, tz + BACK + sh.y);
-    this.camera.lookAt(tx + sh.x * 0.5, 0, tz - 1);
+    this.camera.lookAt(tx + sh.x * 0.5, 0, tz - 0.5);
   }
 
   private w2s(x: number, y: number, z: number, cb: (p: { x: number; y: number }) => void) {

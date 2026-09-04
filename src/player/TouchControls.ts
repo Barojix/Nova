@@ -1,14 +1,20 @@
-import { clamp } from '../utils/math';
 import { settings } from '../settings/Settings';
 
-// Stare input normalizată, consumată de GameManager la fiecare tick.
+// Controale stil hero-brawler mobil:
+// - STÂNGA: joystick plutitor de mișcare — apare unde pui degetul (orice
+//   atingere pe jumătatea stângă), acel punct devine centrul.
+// - DREAPTA-JOS: stick de ATAC — TAP trage instant cu auto-aim, DRAG țintește
+//   manual și trage la ridicare în direcția trasă.
+// - Deasupra lui: stick de SUPER, mai mic, cu același comportament tap/drag.
 export interface InputState {
   mx: number; mz: number;      // mișcare -1..1
   ax: number; az: number;      // aim -1..1 (direcție)
-  aiming: boolean;
+  aiming: boolean;             // aim manual activ (drag pe stick)
   attackPressed: boolean;      // edge — consumat de game
   superPressed: boolean;       // edge
 }
+
+const TAP_RATIO = 0.3; // sub 30% din rază = tap (auto-aim)
 
 export class TouchControls {
   state: InputState = {
@@ -16,14 +22,17 @@ export class TouchControls {
     attackPressed: false, superPressed: false,
   };
   private moveId: number | null = null;
-  private aimId: number | null = null;
-  private moveCx = 0; private moveCy = 0;
-  private aimSx = 0; private aimSy = 0;
+  private moveOx = 0; private moveOy = 0;
   private keys = new Set<string>();
   private moveBase: HTMLElement | null = null;
   private moveKnob: HTMLElement | null = null;
-  private aimBase: HTMLElement | null = null;
-  private aimKnob: HTMLElement | null = null;
+  private atkBase: HTMLElement | null = null;
+  private atkKnob: HTMLElement | null = null;
+  private supBase: HTMLElement | null = null;
+  private supKnob: HTMLElement | null = null;
+  /** aim manual păstrat până e consumat focul tras prin drag */
+  private aimedShot = false;
+  private aimedSuper = false;
 
   constructor(private root: HTMLElement) {
     this.build();
@@ -31,101 +40,125 @@ export class TouchControls {
     window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
   }
 
+  private radius(el: HTMLElement | null): number {
+    const base = el?.classList.contains('super') ? 44 : 56;
+    return base * settings.data.joystickSize;
+  }
+
   private build() {
     this.root.innerHTML = `
-      <div class="tc-move" id="tc-move"><div class="tc-knob" id="tc-mknob"></div></div>
-      <div class="tc-aim" id="tc-aim"><div class="tc-knob aim" id="tc-aknob"></div></div>
-      <div class="tc-btns">
-        <button class="tc-btn super" id="tc-super">💥<span>SUPER</span></button>
-        <button class="tc-btn atk" id="tc-atk">🔥<span>ATAC</span></button>
-      </div>`;
+      <div class="tc-stick move" id="tc-move"><div class="tc-knob" id="tc-mknob"></div></div>
+      <div class="tc-stick atk" id="tc-atk"><div class="tc-knob atk" id="tc-aknob"></div><div class="tc-ico">🔥</div></div>
+      <div class="tc-stick super" id="tc-sup"><div class="tc-knob sup" id="tc-sknob"></div><div class="tc-ico">💥</div></div>`;
     this.moveBase = this.root.querySelector('#tc-move');
     this.moveKnob = this.root.querySelector('#tc-mknob');
-    this.aimBase = this.root.querySelector('#tc-aim');
-    this.aimKnob = this.root.querySelector('#tc-aknob');
-    const atk = this.root.querySelector('#tc-atk')!;
-    const sup = this.root.querySelector('#tc-super')!;
+    this.atkBase = this.root.querySelector('#tc-atk');
+    this.atkKnob = this.root.querySelector('#tc-aknob');
+    this.supBase = this.root.querySelector('#tc-sup');
+    this.supKnob = this.root.querySelector('#tc-sknob');
 
-    atk.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
-      this.state.attackPressed = true;
-      this.vibrate(15);
-    });
-    sup.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
-      this.state.superPressed = true;
-      this.vibrate(30);
-    });
-
-    // joystick mișcare — zona stânga
-    const R = 60 * settings.data.joystickSize;
-    this.moveBase!.addEventListener('pointerdown', (e) => {
+    // --- mișcare: orice atingere pe jumătatea stângă devine joystick ---
+    this.root.addEventListener('pointerdown', (e) => {
+      const t = e.target as HTMLElement;
+      if (t.closest('.tc-stick')) return; // stick-urile își gestionează singure atingerea
+      if (e.clientX > window.innerWidth * 0.45) return; // dreapta = zona de atac
+      if (this.moveId !== null) return;
       this.moveId = e.pointerId;
-      this.moveCx = e.clientX; this.moveCy = e.clientY;
-      this.positionBase(this.moveBase!, e.clientX, e.clientY);
-      this.moveBase!.setPointerCapture(e.pointerId);
+      this.moveOx = e.clientX; this.moveOy = e.clientY;
+      this.place(this.moveBase!, e.clientX, e.clientY);
+      this.vibrate(8);
     });
-    this.moveBase!.addEventListener('pointermove', (e) => {
-      if (e.pointerId !== this.moveId) return;
-      const dx = (e.clientX - this.moveCx) / R;
-      const dz = (e.clientY - this.moveCy) / R;
+    window.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== this.moveId || !this.moveBase) return;
+      const R = this.radius(this.moveBase);
+      const dx = (e.clientX - this.moveOx) / R;
+      const dz = (e.clientY - this.moveOy) / R;
       const l = Math.hypot(dx, dz) || 1;
       const c = Math.min(1, l);
       this.state.mx = (dx / l) * c;
       this.state.mz = (dz / l) * c;
-      this.moveKnob!.style.transform = `translate(${this.state.mx * 42}px, ${this.state.mz * 42}px)`;
+      this.moveKnob!.style.transform = `translate(${this.state.mx * R * 0.7}px, ${this.state.mz * R * 0.7}px)`;
     });
     const endMove = (e: PointerEvent) => {
       if (e.pointerId !== this.moveId) return;
       this.moveId = null;
       this.state.mx = 0; this.state.mz = 0;
       this.moveKnob!.style.transform = 'translate(0,0)';
-      this.moveBase!.style.left = '';
-      this.moveBase!.style.top = '';
       this.moveBase!.classList.remove('anchored');
     };
-    this.moveBase!.addEventListener('pointerup', endMove);
-    this.moveBase!.addEventListener('pointercancel', endMove);
+    window.addEventListener('pointerup', endMove);
+    window.addEventListener('pointercancel', endMove);
 
-    // aim — drag oriunde în dreapta (element invizibil mare)
-    this.aimBase!.addEventListener('pointerdown', (e) => {
-      this.aimId = e.pointerId;
-      this.aimSx = e.clientX; this.aimSy = e.clientY;
-      this.state.aiming = true;
-      this.positionBase(this.aimBase!, e.clientX, e.clientY);
-      this.aimBase!.setPointerCapture(e.pointerId);
-    });
-    this.aimBase!.addEventListener('pointermove', (e) => {
-      if (e.pointerId !== this.aimId) return;
-      const s = settings.data.sensitivity;
-      const dx = (e.clientX - this.aimSx) * 0.02 * s;
-      const dz = (e.clientY - this.aimSy) * 0.02 * s;
-      if (Math.hypot(dx, dz) > 0.15) {
-        const l = Math.hypot(dx, dz);
-        this.state.ax = dx / l;
-        this.state.az = dz / l;
-        this.aimKnob!.style.transform = `translate(${this.state.ax * 30}px, ${this.state.az * 30}px)`;
-      }
-    });
-    const endAim = (e: PointerEvent) => {
-      if (e.pointerId !== this.aimId) return;
-      this.aimId = null;
-      // ridicare deget pe aim = atac (ca în Brawl Stars)
-      this.state.attackPressed = true;
-      this.state.aiming = false;
-      this.aimKnob!.style.transform = 'translate(0,0)';
-      this.aimBase!.style.left = '';
-      this.aimBase!.style.top = '';
-      this.aimBase!.classList.remove('anchored');
-    };
-    this.aimBase!.addEventListener('pointerup', endAim);
-    this.aimBase!.addEventListener('pointercancel', endAim);
+    // --- stick-uri de foc (atac + super) ---
+    this.bindFireStick(this.atkBase!, this.atkKnob!, false);
+    this.bindFireStick(this.supBase!, this.supKnob!, true);
   }
 
-  private positionBase(el: HTMLElement, x: number, y: number) {
+  private bindFireStick(base: HTMLElement, knob: HTMLElement, isSuper: boolean) {
+    let pid: number | null = null;
+    let dragged = false;
+    const center = () => {
+      const r = base.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, rad: r.width / 2 };
+    };
+    base.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (pid !== null) return;
+      pid = e.pointerId;
+      dragged = false;
+      base.classList.add('held');
+      try { base.setPointerCapture(e.pointerId); } catch { /* noop */ }
+    });
+    base.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== pid) return;
+      const c = center();
+      const dx = e.clientX - c.x, dy = e.clientY - c.y;
+      const l = Math.hypot(dx, dy);
+      if (l > c.rad * TAP_RATIO) {
+        dragged = true;
+        const cl = Math.min(1, l / c.rad);
+        const nx = (dx / (l || 1)) * cl, ny = (dy / (l || 1)) * cl;
+        this.state.ax = nx;
+        this.state.az = ny;
+        this.state.aiming = true;
+        knob.style.transform = `translate(${nx * c.rad * 0.62}px, ${ny * c.rad * 0.62}px)`;
+      }
+    });
+    const up = (e: PointerEvent) => {
+      if (e.pointerId !== pid) return;
+      pid = null;
+      base.classList.remove('held');
+      knob.style.transform = 'translate(0,0)';
+      if (dragged) {
+        // drag → foc în direcția trasă (aim manual păstrat până la consum)
+        if (isSuper) { this.state.superPressed = true; this.aimedSuper = true; }
+        else { this.state.attackPressed = true; this.aimedShot = true; }
+        this.vibrate(20);
+      } else {
+        // tap → foc instant cu auto-aim (jocul alege ținta)
+        this.state.aiming = false;
+        if (isSuper) this.state.superPressed = true;
+        else this.state.attackPressed = true;
+        this.vibrate(15);
+      }
+    };
+    base.addEventListener('pointerup', up);
+    base.addEventListener('pointercancel', () => {
+      pid = null;
+      base.classList.remove('held');
+      knob.style.transform = 'translate(0,0)';
+      this.state.aiming = false;
+    });
+  }
+
+  private place(el: HTMLElement, x: number, y: number) {
     el.classList.add('anchored');
-    el.style.left = `${x - 70}px`;
-    el.style.top = `${y - 70}px`;
+    const r = el.getBoundingClientRect();
+    el.style.left = `${x - r.width / 2}px`;
+    el.style.top = `${y - r.height / 2}px`;
+    el.style.right = 'auto';
+    el.style.bottom = 'auto';
   }
 
   private vibrate(ms: number) {
@@ -170,12 +203,26 @@ export class TouchControls {
   consumeAttack(): boolean {
     const v = this.state.attackPressed;
     this.state.attackPressed = false;
+    if (v && this.aimedShot) {
+      // foc tras prin drag: aimul manual a fost folosit, îl eliberăm acum
+      this.aimedShot = false;
+      this.state.aiming = false;
+    }
     return v;
   }
   consumeSuper(): boolean {
     const v = this.state.superPressed;
     this.state.superPressed = false;
+    if (v && this.aimedSuper) {
+      this.aimedSuper = false;
+      this.state.aiming = false;
+    }
     return v;
+  }
+
+  /** Aprinde/stinge vizual stick-ul de super (gata de folosit sau nu). */
+  setSuperReady(ready: boolean) {
+    this.supBase?.classList.toggle('ready', ready);
   }
 
   setVisible(v: boolean) {
@@ -194,5 +241,3 @@ export class TouchControls {
     return { x: this.state.ax, z: this.state.az };
   }
 }
-
-export const clampVec = clamp;

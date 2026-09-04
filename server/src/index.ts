@@ -3,6 +3,7 @@
 // Rulează simularea pură din ../src/game/Match.ts (fără Three.js).
 import { WebSocketServer, WebSocket } from 'ws';
 import { Match, type SimFighter, type SimInput } from '../../src/game/Match.js';
+import { canSee } from '../../src/game/visibility.js';
 import { mapById } from '../../src/data/maps.js';
 import { heroById } from '../../src/data/heroes.js';
 import { uid } from '../../src/utils/math.js';
@@ -61,6 +62,7 @@ function serverBot(m: Match, f: SimFighter, dt: number): SimInput {
   for (const e of m.fighters) {
     if (!e.alive || e.id === f.id) continue;
     if (m.modeId !== 'showdown' && e.team === f.team) continue;
+    if (!canSee(m.map.bushes, f.x, f.z, e.x, e.z)) continue;
     const d = Math.hypot(e.x - f.x, e.z - f.z);
     if (d < best) {
       best = d;

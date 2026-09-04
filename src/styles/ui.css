@@ -375,29 +375,39 @@ html, body {
 #banner small { display: block; font-size: 15px; letter-spacing: 0; color: #fff; }
 @keyframes bannerIn { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
-/* controale touch */
-.tc-move, .tc-aim {
-  position: absolute; width: 140px; height: 140px; border-radius: 50%;
+/* controale touch stil Brawl: move plutitor + stick atac + stick super */
+#touch-root { touch-action: none; }
+.tc-stick {
+  position: absolute; border-radius: 50%;
   background: #ffffff0d; border: 2px solid #ffffff2a;
+  touch-action: none; pointer-events: auto;
 }
-.tc-move { left: 18px; bottom: calc(30px + var(--sab)); }
-.tc-aim { right: 130px; bottom: calc(30px + var(--sab)); opacity: 0.55; }
-.tc-move.anchored, .tc-aim.anchored { background: #ffffff14; }
+.tc-stick.move { width: 140px; height: 140px; left: 18px; bottom: calc(30px + var(--sab)); opacity: 0; }
+.tc-stick.move.anchored { opacity: 1; background: #ffffff14; }
+.tc-stick.atk {
+  width: 104px; height: 104px; right: 16px; bottom: calc(30px + var(--sab));
+  background: #ff9f1c22; border-color: #ff9f1caa;
+}
+.tc-stick.atk.held { background: #ff9f1c44; }
+.tc-stick.super {
+  width: 76px; height: 76px; right: 136px; bottom: calc(112px + var(--sab));
+  background: #ffffff0d; border-color: #ffffff2a; opacity: 0.55;
+}
+.tc-stick.super.ready { background: #b15cff33; border-color: #b15cff; opacity: 1;
+  box-shadow: 0 0 18px #b15cff88; }
+.tc-stick.super.held { background: #b15cff55; }
 .tc-knob {
-  position: absolute; left: 50%; top: 50%; width: 60px; height: 60px; margin: -30px;
+  position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px;
   border-radius: 50%; background: #ffffff33; border: 2px solid #ffffff55;
 }
-.tc-knob.aim { background: #ff5fa233; border-color: #ff5fa288; }
-.tc-btns { position: absolute; right: 14px; bottom: calc(26px + var(--sab)); display: flex; flex-direction: column; gap: 10px; }
-.tc-btn {
-  width: 76px; height: 76px; border-radius: 50%; border: 3px solid #ffffff44;
-  font-size: 26px; color: #fff; font-weight: 900; pointer-events: auto;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
+.tc-stick.super .tc-knob { width: 40px; height: 40px; margin: -20px; }
+.tc-knob.atk { background: #ff9f1c55; border-color: #ff9f1ccc; }
+.tc-knob.sup { background: #b15cff55; border-color: #b15cffcc; }
+.tc-ico {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 30px; pointer-events: none;
 }
-.tc-btn span { font-size: 9px; letter-spacing: 1px; }
-.tc-btn.atk { background: #ff9f1ccc; box-shadow: 0 4px 0 #a34d00; }
-.tc-btn.super { background: #b15cffcc; box-shadow: 0 4px 0 #5a1fa3; }
-.tc-btn:active { transform: scale(0.92); }
+.tc-stick.super .tc-ico { font-size: 24px; }
 
 /* sfârșit meci */
 .end-box {
@@ -480,13 +490,12 @@ html, body {
   #respawn { font-size: 16px; bottom: 40%; }
 
   /* controale touch — mai joase și compacte */
-  .tc-move, .tc-aim { width: 118px; height: 118px; }
-  .tc-move { left: 12px; bottom: calc(14px + var(--sab)); }
-  .tc-aim { right: 104px; bottom: calc(14px + var(--sab)); }
-  .tc-knob { width: 52px; height: 52px; margin: -26px; }
-  .tc-btns { right: 10px; bottom: calc(12px + var(--sab)); gap: 8px; }
-  .tc-btn { width: 66px; height: 66px; font-size: 22px; border-width: 2px; }
-  .tc-btn span { font-size: 8px; }
+  .tc-stick.move { width: 118px; height: 118px; left: 12px; bottom: calc(14px + var(--sab)); }
+  .tc-stick.atk { width: 92px; height: 92px; right: 12px; bottom: calc(14px + var(--sab)); }
+  .tc-stick.super { width: 66px; height: 66px; right: 114px; bottom: calc(92px + var(--sab)); }
+  .tc-knob { width: 48px; height: 48px; margin: -24px; }
+  .tc-stick.super .tc-knob { width: 34px; height: 34px; margin: -17px; }
+  .tc-ico { font-size: 26px; }
   #toast { bottom: auto; top: 34%; font-size: 12px; }
 
   /* --- overlay-uri --- */
