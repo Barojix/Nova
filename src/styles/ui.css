@@ -98,6 +98,49 @@ html, body {
 
 /* ---------- carduri mari moduri ---------- */
 .bcard.modebig .face { width: 72px; height: 72px; font-size: 44px; }
+.bcard.custom { border-color: var(--gold); background: linear-gradient(180deg, #2a2410 0%, #141b36 100%); }
+
+/* ---------- grid eroi stil Brawl ---------- */
+.herogrid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+.hcard {
+  background: var(--panel2); border: 2px solid var(--rc, var(--line));
+  border-radius: 14px; overflow: hidden; position: relative;
+}
+.hcard.sel { outline: 2px solid var(--lime); }
+.hface {
+  height: 74px; font-size: 44px; display: flex; align-items: center; justify-content: center;
+  border-bottom: 3px solid var(--rc, var(--line));
+}
+.hpow {
+  position: absolute; top: 4px; right: 4px; background: #000000aa;
+  border: 1px solid var(--gold); color: var(--gold); font-size: 11px; font-weight: 900;
+  border-radius: 999px; padding: 1px 7px;
+}
+.hcard .hinf { padding: 6px 8px 2px; }
+.hcard .nm { font-weight: 900; font-size: 14px; }
+.hcard .tt { font-size: 10px; color: var(--dim); margin-top: 1px; }
+.hbtns { display: flex; gap: 6px; padding: 6px 8px 8px; }
+.hbtns .mbtn { flex: 1; padding: 6px 4px; font-size: 11px; }
+
+/* ---------- prieteni / lobby ---------- */
+.rail-btn { position: relative; }
+.rbadge {
+  position: absolute; top: -6px; right: -6px; min-width: 22px; height: 22px;
+  background: var(--red); color: #fff; font-size: 12px; font-weight: 900;
+  border-radius: 999px; align-items: center; justify-content: center; padding: 0 5px;
+}
+.heropick {
+  display: flex; gap: 6px; overflow-x: auto; padding: 4px 2px; max-width: 100%;
+}
+.hpick {
+  flex: none; width: 46px; height: 46px; font-size: 26px; border-radius: 12px;
+  background: var(--panel2); border: 2px solid var(--line); cursor: pointer;
+}
+.hpick.sel { border-color: var(--lime); background: #1a2050; }
+#lb-modes button, #lb-maps button { min-width: 44px; }
 .floater {
   position: absolute; transform: translate(-50%, -50%) scale(0.6);
   font-weight: 900; font-size: 20px; opacity: 0;
@@ -389,6 +432,10 @@ html, body {
   background: #ff9f1c22; border-color: #ff9f1caa;
 }
 .tc-stick.atk.held { background: #ff9f1c44; }
+/* zonă de atingere extinsă invizibil (degetul nu trebuie să nimerească exact cercul) */
+.tc-stick.atk::before, .tc-stick.super::before {
+  content: ''; position: absolute; inset: -24px;
+}
 .tc-stick.super {
   width: 76px; height: 76px; right: 136px; bottom: calc(112px + var(--sab));
   background: #ffffff0d; border-color: #ffffff2a; opacity: 0.55;

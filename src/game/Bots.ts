@@ -33,14 +33,21 @@ export function botInput(m: Match, f: SimFighter, dt: number): SimInput {
     f.aiMode = 'fight';
   }
 
-  // starrush: dacă sunt stele libere aproape, ia-le
+  // starrush/gemgrab: dacă sunt stele/geme libere aproape, ia-le
   let starGoal: { x: number; z: number } | null = null;
-  if (m.modeId === 'starrush' && f.aiMode !== 'flee' && f.stars < 6) {
+  if ((m.modeId === 'starrush' || m.modeId === 'gemgrab') && f.aiMode !== 'flee' && f.stars < 6) {
     let bd = 9;
     for (const s of m.stars) {
       const d = dist2d(f.x, f.z, s.x, s.z);
       if (d < bd) { bd = d; starGoal = s; }
     }
+  }
+
+  // heist: fără țintă aproape → împinge spre seiful advers
+  let safeGoal: { x: number; z: number } | null = null;
+  if (m.modeId === 'heist' && (!target || best > f.def.range)) {
+    const foe = m.safes.find((s) => s.team !== f.team && s.hp > 0);
+    if (foe) safeGoal = foe;
   }
 
   if (f.aiT <= 0) {
@@ -75,6 +82,8 @@ export function botInput(m: Match, f: SimFighter, dt: number): SimInput {
     } else if (f.aiMode === 'flee') {
       const home = f.team === 0 ? { x: -12, z: 0 } : { x: 12, z: 0 };
       f.aiTx = home.x; f.aiTz = home.z;
+    } else if (safeGoal) {
+      f.aiTx = safeGoal.x + (f.team === 0 ? 3 : -3); f.aiTz = safeGoal.z;
     } else if (starGoal) {
       f.aiTx = starGoal.x; f.aiTz = starGoal.z;
     } else if (target && best > f.def.range * 0.75) {
@@ -97,6 +106,17 @@ export function botInput(m: Match, f: SimFighter, dt: number): SimInput {
   if (dl > 0.6) {
     out.mx = dx / dl;
     out.mz = dz / dl;
+  }
+
+  if (safeGoal) {
+    const d = dist2d(f.x, f.z, safeGoal.x, safeGoal.z);
+    if (d < f.def.range) {
+      const ax = safeGoal.x - f.x, az = safeGoal.z - f.z;
+      const al = Math.hypot(ax, az) || 1;
+      out.ax = ax / al;
+      out.az = az / al;
+      out.attack = Math.random() < 0.85;
+    }
   }
 
   if (target && best < f.def.range + 1.5) {

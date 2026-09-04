@@ -3,8 +3,8 @@ import { Match, type PlayerSpec, type SimFighter, type SimInput } from './Match'
 import { botInput } from './Bots';
 import { buildMap, type BuiltMap } from '../maps/MapBuilder';
 import { canSee } from './visibility';
-import { mapById } from '../data/maps';
-import { heroById } from '../data/heroes';
+import { mapById, mapForMode } from '../data/maps';
+import { heroById, HERO_IDS } from '../data/heroes';
 import { buildHero, type HeroRig } from '../characters/HeroFactory';
 import { Particles } from '../vfx/Particles';
 import { Floaters, Shake } from '../vfx/Floaters';
@@ -70,6 +70,18 @@ export class GameManager {
   private bulletGeo = new THREE.SphereGeometry(0.24, 8, 6);
   private starGroup = new THREE.Group();
   private starMeshes = new Map<number, THREE.Mesh>();
+  private gemMat = new THREE.MeshBasicMaterial({ color: 0xc084fc });
+  private cubeGroup = new THREE.Group();
+  private cubeMeshes = new Map<number, THREE.Mesh>();
+  private cubeGeo = new THREE.BoxGeometry(0.55, 0.55, 0.55);
+  private cubeMat = new THREE.MeshBasicMaterial({ color: 0xff9f1c });
+  private crateGroup = new THREE.Group();
+  private crateMeshes = new Map<number, THREE.Mesh>();
+  private crateGeo = new THREE.BoxGeometry(1.3, 1.3, 1.3);
+  private crateMat = new THREE.MeshLambertMaterial({ color: 0x8a5f36 });
+  private safeMeshes: { box: THREE.Mesh; bar: THREE.Mesh; team: number }[] = [];
+  private safeGeo = new THREE.BoxGeometry(2.2, 2.6, 2.2);
+  private gasRing: THREE.Mesh | null = null;
   private starGeo = new THREE.OctahedronGeometry(0.45);
   private starMat = new THREE.MeshBasicMaterial({ color: 0xffe066 });
 
@@ -88,8 +100,12 @@ export class GameManager {
   // online
   private net: NetClient | null = null;
   private online = false;  private remoteFighters = new Map<number, SnapFighter>();
-  private remoteBullets: { x: number; z: number; super: boolean; color: number }[] = [];
+  private remoteBullets: { x: number; z: number; super: boolean; color: number; big: boolean }[] = [];
   private remoteStars: { id: number; x: number; z: number }[] = [];
+  private remoteCubes: { id: number; x: number; z: number }[] = [];
+  private remoteCrates: { id: number; x: number; z: number }[] = [];
+  private remoteSafes: { team: number; hp: number; maxHp: number; x: number; z: number }[] = [];
+  private remoteGas = 0;
   private remoteScore = { a: 0, b: 0 };
   private remoteOver = false;
   private remoteWinner = -1;
@@ -200,10 +216,10 @@ export class GameManager {
 
   // ---------- lifecycle ----------
 
-  startMatch(modeId: string, heroId: string, playerName: string, useOnline: boolean, room?: string) {
+  startMatch(modeId: string, heroId: string, playerName: string, useOnline: boolean, room?: string, customMapId?: string) {
     this.cleanup();
     this.modeId = modeId;
-    this.mapId = modeId === 'training' ? 'dune-rush' : 'crystal-hollow';
+    this.mapId = customMapId ?? mapForMode(modeId);
     const mapDef = mapById(this.mapId);
     audio.unlock();
     this.ui.showMatchUI(modeId);
@@ -225,6 +241,13 @@ export class GameManager {
   private startOffline(modeId: string, heroId: string, playerName: string, _mapId: string) {
     void _mapId;
     const mapDef = mapById(this.mapId);
+    // poate exista deja o hartă (fallback online→offline): o ștergem, altfel
+    // rămâne orfană în scenă (harta veche vizibilă în meniu + leak de memorie)
+    if (this.builtMap) {
+      this.builtMap.dispose();
+      this.scene.remove(this.starGroup);
+      this.builtMap = null;
+    }
     this.builtMap = buildMap(this.scene, mapDef);
     this.scene.add(this.starGroup);
     const specs = this.buildSpecs(modeId, heroId, playerName);
@@ -239,38 +262,45 @@ export class GameManager {
 
   private buildSpecs(modeId: string, heroId: string, playerName: string): PlayerSpec[] {
     const names = ['Rook', 'Zed', 'Pip', 'Kira', 'Jax', 'Luma', 'Onyx', 'Fizz', 'Tara'];
-    const heroes = ['volt', 'moss', 'blip'];
+    const heroes = HERO_IDS;
     let ni = 0;
     const nb = () => `${names[ni % names.length]}${ni++ > 8 ? ni : ''}`;
     const hb = () => heroes[Math.floor(Math.random() * heroes.length)];
+    const botPower = () => 1 + Math.floor(Math.random() * 3);
+    const myPower = Math.max(1, Math.min(11, Math.round(save.data.heroPower[heroId] ?? 1)));
     if (modeId === 'showdown') {
-      const specs: PlayerSpec[] = [{ name: playerName, heroId, team: 0, isBot: false, isLocal: true }];
+      const specs: PlayerSpec[] = [{ name: playerName, heroId, team: 0, isBot: false, isLocal: true, power: myPower }];
       for (let i = 0; i < 9; i++) {
-        specs.push({ name: nb(), heroId: hb(), team: i + 1, isBot: true });
+        specs.push({ name: nb(), heroId: hb(), team: i + 1, isBot: true, power: botPower() });
       }
       return specs;
     }
     if (modeId === 'training') {
       return [
-        { name: playerName, heroId, team: 0, isBot: false, isLocal: true },
-        { name: 'Țintă A', heroId: 'moss', team: 1, isBot: true },
-        { name: 'Țintă B', heroId: 'volt', team: 1, isBot: true },
-        { name: 'Țintă C', heroId: 'blip', team: 1, isBot: true },
+        { name: playerName, heroId, team: 0, isBot: false, isLocal: true, power: myPower },
+        { name: 'Țintă A', heroId: 'moss', team: 1, isBot: true, power: 1 },
+        { name: 'Țintă B', heroId: 'volt', team: 1, isBot: true, power: 1 },
+        { name: 'Țintă C', heroId: 'blip', team: 1, isBot: true, power: 1 },
       ];
     }
     // echipe 3v3
     return [
-      { name: playerName, heroId, team: 0, isBot: false, isLocal: true },
-      { name: nb(), heroId: hb(), team: 0, isBot: true },
-      { name: nb(), heroId: hb(), team: 0, isBot: true },
-      { name: nb(), heroId: hb(), team: 1, isBot: true },
-      { name: nb(), heroId: hb(), team: 1, isBot: true },
-      { name: nb(), heroId: hb(), team: 1, isBot: true },
+      { name: playerName, heroId, team: 0, isBot: false, isLocal: true, power: myPower },
+      { name: nb(), heroId: hb(), team: 0, isBot: true, power: botPower() },
+      { name: nb(), heroId: hb(), team: 0, isBot: true, power: botPower() },
+      { name: nb(), heroId: hb(), team: 1, isBot: true, power: botPower() },
+      { name: nb(), heroId: hb(), team: 1, isBot: true, power: botPower() },
+      { name: nb(), heroId: hb(), team: 1, isBot: true, power: botPower() },
     ];
   }
 
   private startOnline(modeId: string, heroId: string, playerName: string, room?: string) {
     const mapDef = mapById(this.mapId);
+    if (this.builtMap) {
+      this.builtMap.dispose();
+      this.scene.remove(this.starGroup);
+      this.builtMap = null;
+    }
     this.builtMap = buildMap(this.scene, mapDef);
     this.scene.add(this.starGroup);
     this.online = false;
@@ -296,6 +326,10 @@ export class GameManager {
       for (const f of s.fighters) this.remoteFighters.set(f.id, f);
       this.remoteBullets = s.bullets;
       this.remoteStars = s.stars;
+      this.remoteCubes = s.cubes ?? [];
+      this.remoteCrates = s.crates ?? [];
+      this.remoteSafes = s.safes ?? [];
+      this.remoteGas = s.gas ?? 0;
       this.remoteScore = { a: s.scoreA, b: s.scoreB };
       if (this.net && this.localId === 0) {
         const me = s.fighters.find((f) => f.id === this.net!.myId);
@@ -356,6 +390,14 @@ export class GameManager {
         this.w2s(d.x, 1.5, d.z!, (p) =>
           this.floaters.spawn(() => p, d.x!, 2, d.z!, 'KO!', 'ko'));
       }
+    } else if (e === 'crate' && d.x !== undefined) {
+      audio.sfx('hit');
+      this.shake.add(0.2);
+      this.particles.spawn(d.x, 0.8, d.z!, 0x8a5f36, 18, 6, 0.5);
+    } else if (e === 'powerup' && d.id !== undefined) {
+      const f = this.remoteFighters.get(d.id);
+      audio.sfx('coin');
+      if (f) this.particles.spawn(f.x, 1.2, f.z, 0xff9f1c, 14, 6, 0.5);
     }
   }
 
@@ -363,6 +405,7 @@ export class GameManager {
     this.running = false;
     this.renderer.setAnimationLoop(null);
     this.cleanup();
+    this.controls.reset();
     this.controls.setVisible(false);
     this.ui.hideMatchUI();
     audio.stopMusic();
@@ -402,11 +445,37 @@ export class GameManager {
     for (const [, m] of this.starMeshes) this.starGroup.remove(m);
     this.starMeshes.clear();
     this.scene.remove(this.starGroup);
+    for (const [, m] of this.cubeMeshes) this.cubeGroup.remove(m);
+    this.cubeMeshes.clear();
+    this.scene.remove(this.cubeGroup);
+    for (const [, m] of this.crateMeshes) this.crateGroup.remove(m);
+    this.crateMeshes.clear();
+    this.scene.remove(this.crateGroup);
+    for (const s of this.safeMeshes) this.scene.remove(s.box, s.bar);
+    this.safeMeshes = [];
+    if (this.gasRing) {
+      this.scene.remove(this.gasRing);
+      this.gasRing.geometry.dispose();
+      (this.gasRing.material as THREE.Material).dispose();
+      this.gasRing = null;
+    }
     this.builtMap?.dispose();
     this.builtMap = null;
+    // plasă de siguranță: orice obiect orfan (hartă/vederi din fallback-uri)
+    // iese din scenă — fundalul meniului nu mai poate fi o hartă veche
+    try {
+      const keep = new Set<THREE.Object3D>([this.particles.node]);
+      for (const o of [...this.scene.children]) {
+        if (!keep.has(o)) this.scene.remove(o);
+      }
+    } catch { /* scena rămâne cum e */ }
     this.remoteFighters.clear();
     this.remoteBullets = [];
     this.remoteStars = [];
+    this.remoteCubes = [];
+    this.remoteCrates = [];
+    this.remoteSafes = [];
+    this.remoteGas = 0;
     this.remoteOver = false;
     this.revealUntil.clear();
     this.hideDeb.clear();
@@ -675,6 +744,23 @@ export class GameManager {
         this.w2s(f.x, 1.5, f.z, (p) =>
           this.floaters.spawn(() => p, f.x, 2, f.z, '+1 ⭐', 'heal'));
       }
+    } else if (e.type === 'powerup') {
+      const f = m.fighters.find((x) => x.id === e.id);
+      audio.sfx('coin');
+      this.shake.add(0.15);
+      if (f) {
+        this.particles.spawn(f.x, 1.2, f.z, 0xff9f1c, 16, 6, 0.5);
+        if (f.isLocal) {
+          this.w2s(f.x, 1.5, f.z, (p) =>
+            this.floaters.spawn(() => p, f.x, 2.2, f.z, '+PUTERE 💥', 'heal'));
+          audio.sfx('super');
+        }
+      }
+    } else if (e.type === 'crate') {
+      audio.sfx('hit');
+      this.shake.add(0.2);
+      this.particles.spawn(e.x, 0.8, e.z, 0x8a5f36, 18, 6, 0.5);
+      this.particles.spawn(e.x, 1.2, e.z, 0xff9f1c, 10, 5, 0.4);
     } else if (e.type === 'end') {
       // gestionat de tick
     }
@@ -692,7 +778,9 @@ export class GameManager {
       superPct: local.superReady ? 1 : local.superCharge / local.def.superCooldownHits,
       scoreA: m.scoreA, scoreB: m.scoreB,
       time: this.matchTime,
-      stars: this.modeId === 'starrush' ? local.stars : this.kills,
+        stars: this.modeId === 'starrush' || this.modeId === 'gemgrab'
+          ? local.stars
+          : this.modeId === 'showdown' ? local.powerups : this.kills,
       kills: this.kills,
       alive, total: m.fighters.length,
       holdT: m.holdT, holding: m.holdingTeam === local.team,
@@ -809,7 +897,6 @@ export class GameManager {
         const moving = f.alive && this.lastMoveMag(f) > 0.1;
         // ascunde inamicii în tufiș (stealth ca în hero brawlere)
         const hidden = this.shouldHide(f);
-        v.rig.group.visible = f.alive || !f.alive ? true : true;
         if (!f.alive) {
           // moartea e animată prin playDeath; după animație ascundem
           if (v.rig.group.scale.x < 0.05) v.rig.group.visible = false;
@@ -829,9 +916,13 @@ export class GameManager {
       }
       // gloanțe: pool de mesh-uri sincronizat 1:1 cu sim-ul
       this.syncBullets(this.match.bullets.map((b) => ({
-        x: b.x, z: b.z, super: b.isSuper, color: b.color,
+        x: b.x, z: b.z, super: b.isSuper, color: b.color, big: b.big,
       })));
       this.syncStars(this.match.stars.map((s) => ({ id: s.id, x: s.x, z: s.z })));
+      this.syncCubes(this.match.cubes.map((s) => ({ id: s.id, x: s.x, z: s.z })));
+      this.syncCrates(this.match.crates.map((s) => ({ id: s.id, x: s.x, z: s.z })));
+      this.syncSafes(this.match.safes);
+      this.updateGas(this.match.gasR);
     } else if (this.online || this.remoteFighters.size > 0) {
       // online: interpolare spre snapshot
       const k = Math.min(1, dt * 10);
@@ -850,6 +941,10 @@ export class GameManager {
       }
       this.syncBullets(this.remoteBullets);
       this.syncStars(this.remoteStars);
+      this.syncCubes(this.remoteCubes);
+      this.syncCrates(this.remoteCrates);
+      this.syncSafes(this.remoteSafes);
+      this.updateGas(this.remoteGas);
     }
     // pulsație stele
     const t = this.clock * 3;
@@ -906,7 +1001,7 @@ export class GameManager {
     return st.hidden;
   }
 
-  private syncBullets(list: { x: number; z: number; super: boolean; color: number }[]) {
+  private syncBullets(list: { x: number; z: number; super: boolean; color: number; big: boolean }[]) {
     while (this.bulletMeshes.length < list.length) {
       const m = new THREE.Mesh(
         this.bulletGeo,
@@ -923,7 +1018,7 @@ export class GameManager {
         mesh.visible = true;
         mesh.position.set(b.x, 1.0, b.z);
         (mesh.material as THREE.MeshBasicMaterial).color.setHex(b.color);
-        mesh.scale.setScalar(b.super ? 1.6 : 1);
+        mesh.scale.setScalar(b.super ? 1.6 : b.big ? 2.1 : 1);
       } else {
         mesh.visible = false;
       }
@@ -936,12 +1031,14 @@ export class GameManager {
   }
 
   private syncStars(list: { id: number; x: number; z: number }[]) {
+    // gemgrab: geme violete, starrush: stele galbene
+    const mat = this.modeId === 'gemgrab' ? this.gemMat : this.starMat;
     const seen = new Set<number>();
     for (const s of list) {
       seen.add(s.id);
       let m = this.starMeshes.get(s.id);
       if (!m) {
-        m = new THREE.Mesh(this.starGeo, this.starMat);
+        m = new THREE.Mesh(this.starGeo, mat);
         this.starGroup.add(m);
         this.starMeshes.set(s.id, m);
       }
@@ -953,6 +1050,104 @@ export class GameManager {
         this.starMeshes.delete(id);
       }
     }
+  }
+
+  private syncCubes(list: { id: number; x: number; z: number }[]) {
+    const seen = new Set<number>();
+    for (const s of list) {
+      seen.add(s.id);
+      let m = this.cubeMeshes.get(s.id);
+      if (!m) {
+        m = new THREE.Mesh(this.cubeGeo, this.cubeMat);
+        this.cubeGroup.add(m);
+        this.cubeMeshes.set(s.id, m);
+      }
+      m.position.set(s.x, 0.5, s.z);
+      m.rotation.y = this.clock * 1.5 + s.x;
+    }
+    for (const [id, m] of [...this.cubeMeshes]) {
+      if (!seen.has(id)) {
+        this.cubeGroup.remove(m);
+        this.cubeMeshes.delete(id);
+      }
+    }
+  }
+
+  private syncCrates(list: { id: number; x: number; z: number }[]) {
+    const seen = new Set<number>();
+    for (const s of list) {
+      seen.add(s.id);
+      let m = this.crateMeshes.get(s.id);
+      if (!m) {
+        m = new THREE.Mesh(this.crateGeo, this.crateMat);
+        this.crateGroup.add(m);
+        this.crateMeshes.set(s.id, m);
+      }
+      m.position.set(s.x, 0.65, s.z);
+    }
+    for (const [id, m] of [...this.crateMeshes]) {
+      if (!seen.has(id)) {
+        this.crateGroup.remove(m);
+        this.crateMeshes.delete(id);
+      }
+    }
+  }
+
+  private syncSafes(list: { team: number; hp: number; maxHp: number; x: number; z: number }[]) {
+    while (this.safeMeshes.length < list.length) {
+      const box = new THREE.Mesh(
+        this.safeGeo,
+        new THREE.MeshLambertMaterial({ color: 0x3a3f5c })
+      );
+      const bar = new THREE.Mesh(
+        new THREE.BoxGeometry(2.6, 0.3, 0.2),
+        new THREE.MeshBasicMaterial({ color: 0xb8f135 })
+      );
+      this.scene.add(box, bar);
+      this.safeMeshes.push({ box, bar, team: 0 });
+    }
+    for (let i = 0; i < this.safeMeshes.length; i++) {
+      const v = this.safeMeshes[i];
+      if (i < list.length) {
+        const s = list[i];
+        v.team = s.team;
+        v.box.visible = true;
+        v.bar.visible = s.hp > 0;
+        v.box.position.set(s.x, 1.3, s.z);
+        const frac = Math.max(0, s.hp / s.maxHp);
+        v.bar.position.set(s.x, 3.1, s.z);
+        v.bar.scale.x = Math.max(0.01, frac);
+        (v.bar.material as THREE.MeshBasicMaterial).color.setHex(
+          frac > 0.5 ? 0xb8f135 : frac > 0.25 ? 0xffb020 : 0xff3b6b
+        );
+        (v.box.material as THREE.MeshLambertMaterial).color.setHex(
+          s.hp <= 0 ? 0x222222 : s.team === 0 ? 0x2d7dff : 0xff3b6b
+        );
+      } else {
+        v.box.visible = false;
+        v.bar.visible = false;
+      }
+    }
+  }
+
+  private updateGas(r: number) {
+    // inel toxic: vizibil doar în showdown când gazul s-a strâns sub hartă
+    if (this.modeId !== 'showdown' || r <= 0) {
+      if (this.gasRing) this.gasRing.visible = false;
+      return;
+    }
+    if (!this.gasRing) {
+      const geo = new THREE.RingGeometry(0.96, 1.04, 64);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xb8f135, transparent: true, opacity: 0.75, side: THREE.DoubleSide,
+      });
+      this.gasRing = new THREE.Mesh(geo, mat);
+      this.gasRing.rotation.x = -Math.PI / 2;
+      this.gasRing.position.y = 0.12;
+      this.scene.add(this.gasRing);
+    }
+    this.gasRing.visible = true;
+    this.gasRing.scale.setScalar(Math.max(0.1, r));
   }
 
   private updateCamera(_dt: number) {

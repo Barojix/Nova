@@ -1,4 +1,4 @@
-import { heroById, type HeroDef } from '../data/heroes';
+import { heroById, scaleHeroDef, type HeroDef } from '../data/heroes';
 import type { MapDef } from '../data/maps';
 import { clamp, dist2d, uid } from '../utils/math';
 
@@ -30,6 +30,8 @@ export interface SimFighter {
   kills: number;
   deaths: number;
   stars: number;
+  power: number;    // nivel putere erou (1-11)
+  powerups: number; // cuburi din cutii (showdown): +10% damage fiecare
   // bot brain
   aiT: number; aiTx: number; aiTz: number;
   aiMode: 'fight' | 'star' | 'flee' | 'dummy';
@@ -45,7 +47,14 @@ export interface SimBullet {
   damage: number; team: number; ownerId: number;
   isSuper: boolean;
   color: number;
+  big: boolean;      // proiectil mare (lob/wave/mortar) — rază + vizual
+  pierce: boolean;   // străpunge (lovește mai mulți)
+  hitIds?: number[]; // deja loviți (doar pierce)
 }
+
+export interface CrateDef { id: number; x: number; z: number; hp: number }
+export interface CubeDrop { id: number; x: number; z: number }
+export interface SafeState { team: number; hp: number; maxHp: number; x: number; z: number }
 
 export interface StarDrop { id: number; x: number; z: number }
 
@@ -55,6 +64,8 @@ export type MatchEvent =
   | { type: 'ko'; id: number; killer: number; x: number; z: number }
   | { type: 'spawn'; id: number }
   | { type: 'pickup'; id: number; starId: number }
+  | { type: 'powerup'; id: number }
+  | { type: 'crate'; id: number; x: number; z: number }
   | { type: 'super'; id: number }
   | { type: 'end'; winner: number; reason: string };
 
@@ -64,6 +75,7 @@ export interface PlayerSpec {
   team: number;
   isBot: boolean;
   isLocal?: boolean;
+  power?: number; // nivel putere 1-11 (scalare stat-uri)
 }
 
 const WALL_PAD = 0.7;
@@ -121,13 +133,15 @@ export class Match {
   endReason = '';
   scoreA = 0;
   scoreB = 0;
-  holdT = 0; // starrush countdown
+  holdT = 0; // starrush/gemgrab countdown
   holdingTeam = -1;
   starT = 0;
-  gasT = 90; // showdown sudden death
+  gasR = 0; // showdown: raza zonei sigure (se strânge continuu)
+  crates: CrateDef[] = [];
+  cubes: CubeDrop[] = [];
+  safes: SafeState[] = [];
   private spawnIdxA = 0;
   private spawnIdxB = 0;
-  suddenDeath = false;
 
   constructor(modeId: string, map: MapDef, specs: PlayerSpec[]) {
     this.modeId = modeId;
@@ -139,7 +153,7 @@ export class Match {
     }));
     void half;
     specs.forEach((s, i) => {
-      const def = heroById(s.heroId);
+      const def = scaleHeroDef(heroById(s.heroId), s.power ?? 1);
       const sp = this.spawnPoint(s.team, i);
       this.fighters.push({
         id: uid(),
@@ -149,23 +163,43 @@ export class Match {
         hp: def.hp, alive: true, respawnT: 0, reloadT: 0,
         superCharge: 0, superReady: false, supersUsed: 0,
         kills: 0, deaths: 0, stars: 0,
+        power: Math.max(1, Math.min(11, Math.round(s.power ?? 1))),
+        powerups: 0,
         aiT: Math.random() * 2, aiTx: 0, aiTz: 0,
         aiMode: modeId === 'training' && s.isBot ? 'dummy' : 'fight',
       });
     });
-    // stea inițială pentru starrush
+    // stele/geme inițiale
     if (modeId === 'starrush') {
       this.dropStar(0, 0);
       this.dropStar(2, 1);
       this.dropStar(-2, -1);
     }
+    if (modeId === 'gemgrab') {
+      this.dropStar(0, 0);
+    }
+    // cutii distructibile (showdown): spargi → cuburi de putere
+    if (modeId === 'showdown') {
+      for (const c of map.crates ?? []) {
+        this.crates.push({ id: uid(), x: c.x, z: c.z, hp: 900 });
+      }
+      this.gasR = (map.size / 2) * 1.35;
+    }
+    // seifuri (heist)
+    if (modeId === 'heist') {
+      for (const s of map.safes ?? []) {
+        this.safes.push({ team: s.team, hp: 12000, maxHp: 12000, x: s.x, z: s.z });
+      }
+    }
   }
 
   private spawnPoint(team: number, i: number) {
     if (this.modeId === 'showdown') {
+      // cerc scalat cu harta (hărți mari de showdown)
+      const r = (this.map.size / 2) * 0.72;
       const n = this.fighters.length + 1;
       const a = (i / 10) * Math.PI * 2;
-      return { x: Math.cos(a) * 12, z: Math.sin(a) * 12, n };
+      return { x: Math.cos(a) * r, z: Math.sin(a) * r, n };
     }
     const arr = team === 0 ? this.map.spawnsA : this.map.spawnsB;
     const s = arr[(team === 0 ? this.spawnIdxA++ : this.spawnIdxB++) % arr.length];
@@ -229,15 +263,50 @@ export class Match {
         dead = true;
       }
       if (!dead) {
+        const hitR = b.big ? 1.2 : 0.85;
         for (const f of this.fighters) {
           if (!f.alive || f.team === b.team) continue;
           // în showdown fiecare e propria echipă
           if (this.modeId === 'showdown' && f.id === b.ownerId) continue;
-          if (dist2d(b.x, b.z, f.x, f.z) < 0.85) {
+          if (b.pierce && b.hitIds?.includes(f.id)) continue;
+          if (dist2d(b.x, b.z, f.x, f.z) < hitR) {
             const died = this.damage(f, b.damage, b.ownerId, b.dx, b.dz);
             this.events.push({ type: 'hit', id: f.id, x: f.x, z: f.z, damage: b.damage });
             void died;
-            dead = true;
+            if (b.pierce) b.hitIds?.push(f.id);
+            else { dead = true; break; }
+          }
+        }
+      }
+      // cutii distructibile (showdown): orice echipă le poate sparge
+      if (!dead && this.crates.length > 0) {
+        for (let ci = this.crates.length - 1; ci >= 0; ci--) {
+          const c = this.crates[ci];
+          if (dist2d(b.x, b.z, c.x, c.z) < 1.2) {
+            c.hp -= b.damage;
+            if (c.hp <= 0) {
+              this.crates.splice(ci, 1);
+              this.cubes.push({ id: uid(), x: c.x, z: c.z });
+              this.events.push({ type: 'crate', id: c.id, x: c.x, z: c.z });
+            } else {
+              this.events.push({ type: 'hit', id: b.ownerId, x: b.x, z: b.z, damage: 0 });
+            }
+            if (!b.pierce) { dead = true; break; }
+          }
+        }
+      }
+      // seifuri (heist): doar echipa adversă le poate lovi
+      if (!dead && this.safes.length > 0) {
+        for (const s of this.safes) {
+          if (s.team === b.team || s.hp <= 0) continue;
+          if (dist2d(b.x, b.z, s.x, s.z) < 1.6) {
+            s.hp -= b.damage;
+            this.events.push({ type: 'hit', id: b.ownerId, x: b.x, z: b.z, damage: 0 });
+            if (s.hp <= 0) {
+              s.hp = 0;
+              this.finish(b.team, `Seiful ${s.team === 0 ? 'ROȘU' : 'ALBASTRU'} a fost distrus!`);
+            }
+            if (!b.pierce) dead = true;
             break;
           }
         }
@@ -245,11 +314,13 @@ export class Match {
       if (dead) this.bullets.splice(i, 1);
     }
 
-    // --- stele ---
-    if (this.modeId === 'starrush') {
+    // --- stele / geme: starrush (centru) + gemgrab (mina) ---
+    if (this.modeId === 'starrush' || this.modeId === 'gemgrab') {
       this.starT -= dt;
-      if (this.starT <= 0 && this.stars.length < 6) {
-        this.starT = 3;
+      const cap = this.modeId === 'gemgrab' ? 8 : 6;
+      const every = this.modeId === 'gemgrab' ? 5 : 3;
+      if (this.starT <= 0 && this.stars.length < cap) {
+        this.starT = every;
         this.dropStar((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10);
       }
       for (const f of this.fighters) {
@@ -272,7 +343,10 @@ export class Match {
           this.holdT = 15;
         } else {
           this.holdT -= dt;
-          if (this.holdT <= 0) this.finish(t, `Echipa ${t === 0 ? 'ALBASTRĂ' : 'ROȘIE'} a păstrat stelele!`);
+          if (this.holdT <= 0) {
+            const what = this.modeId === 'gemgrab' ? 'gemele' : 'stelele';
+            this.finish(t, `Echipa ${t === 0 ? 'ALBASTRĂ' : 'ROȘIE'} a păstrat ${what}!`);
+          }
         }
       } else {
         this.holdingTeam = -1;
@@ -289,19 +363,48 @@ export class Match {
       else if (this.time > 150) this.finish(this.scoreA === this.scoreB ? 0 : this.scoreA > this.scoreB ? 0 : 1, 'Timp expirat!');
     }
 
+    // --- cuburi de putere (showdown) ---
+    if (this.modeId === 'showdown' && this.cubes.length > 0) {
+      for (const f of this.fighters) {
+        if (!f.alive) continue;
+        for (let i = this.cubes.length - 1; i >= 0; i--) {
+          const c = this.cubes[i];
+          if (dist2d(f.x, f.z, c.x, c.z) < 1.2) {
+            this.cubes.splice(i, 1);
+            f.powerups++;
+            this.events.push({ type: 'powerup', id: f.id });
+          }
+        }
+      }
+    }
+
     if (this.modeId === 'showdown') {
       const alive = this.fighters.filter((f) => f.alive);
       if (alive.length <= 1 && this.fighters.length > 1) {
         this.finish(alive[0] ? alive[0].team : 0, `${alive[0]?.name ?? 'Nimeni'} e ultimul în viață!`, alive[0]?.id);
       }
-      this.gasT -= dt;
-      if (this.gasT <= 0 && !this.suddenDeath) this.suddenDeath = true;
-      if (this.suddenDeath) {
-        for (const f of this.fighters) {
-          if (!f.alive) continue;
-          const d = Math.hypot(f.x, f.z);
-          if (d > 9) this.damage(f, f.def.hp * 0.06 * dt * 10 * 0.1, -1, 0, 0);
-        }
+      // gazul se strânge continuu de la început (hartă mare)
+      const half = this.map.size / 2;
+      this.gasR = Math.max(1.5, half * 1.35 - this.time * (half * 1.2 / 110));
+      const dpsMul = 1 + Math.max(0, this.time - 60) / 30;
+      for (const f of this.fighters) {
+        if (!f.alive) continue;
+        const d = Math.hypot(f.x, f.z);
+        if (d > this.gasR) this.damage(f, f.def.hp * 0.045 * dpsMul * dt, -1, 0, 0);
+      }
+    }
+
+    // --- heist: scor = viața seifurilor ---
+    if (this.modeId === 'heist' && this.safes.length >= 2) {
+      const sA = this.safes.find((s) => s.team === 0);
+      const sB = this.safes.find((s) => s.team === 1);
+      this.scoreA = sA ? Math.max(0, Math.round(sA.hp)) : 0;
+      this.scoreB = sB ? Math.max(0, Math.round(sB.hp)) : 0;
+      if (this.time > 180) {
+        this.finish(
+          this.scoreA === this.scoreB ? 0 : this.scoreA > this.scoreB ? 0 : 1,
+          'Timp expirat! Câștigă seiful cel mai intact.'
+        );
       }
     }
   }
@@ -316,6 +419,8 @@ export class Match {
 
   private fire(f: SimFighter, isSuper: boolean) {
     const dx = Math.sin(f.facing), dz = Math.cos(f.facing);
+    // bonus cuburi de putere (showdown): +10% damage fiecare
+    const powMul = 1 + 0.1 * f.powerups;
     if (isSuper) {
       f.superCharge = 0;
       f.superReady = false;
@@ -329,24 +434,34 @@ export class Match {
           x: f.x + dx * 0.8, z: f.z + dz * 0.8,
           dx: dx * c - dz * s, dz: dx * s + dz * c,
           speed: 16, dist: 0, maxDist: f.def.superRange,
-          damage: f.def.superDamage, team: f.team, ownerId: f.id,
-          isSuper: true, color: 0xff9f1c,
+          damage: Math.round(f.def.superDamage * powMul), team: f.team, ownerId: f.id,
+          isSuper: true, color: 0xff9f1c, big: n === 1, pierce: false,
         });
       }
       f.reloadT = 0.4;
       this.events.push({ type: 'super', id: f.id });
     } else {
-      const n = f.def.projectiles;
+      const kind = f.def.kind;
+      const n = kind === 'bolt' || kind === 'pierce'
+        ? Math.max(1, Math.min(2, f.def.projectiles))
+        : f.def.projectiles;
+      const speed = kind === 'lob' ? 11 : kind === 'mortar' ? 9
+        : kind === 'wave' ? 13 : kind === 'spread' ? 18
+        : kind === 'pierce' ? 19 : 20;
+      const gap = kind === 'spread' ? 0.22 : 0.14;
+      const big = kind === 'lob' || kind === 'wave' || kind === 'mortar';
+      const pierce = kind === 'pierce';
       for (let i = 0; i < n; i++) {
-        const spread = n > 1 ? (i - (n - 1) / 2) * 0.18 : 0;
+        const spread = n > 1 ? (i - (n - 1) / 2) * gap : 0;
         const c = Math.cos(spread), s = Math.sin(spread);
         this.bullets.push({
           id: uid(),
           x: f.x + dx * 0.8, z: f.z + dz * 0.8,
           dx: dx * c - dz * s, dz: dx * s + dz * c,
-          speed: 20, dist: 0, maxDist: f.def.range,
-          damage: f.def.damage, team: f.team, ownerId: f.id,
-          isSuper: false, color: 0xffe066,
+          speed, dist: 0, maxDist: f.def.range,
+          damage: Math.round(f.def.damage * powMul), team: f.team, ownerId: f.id,
+          isSuper: false, color: f.def.accent, big, pierce,
+          hitIds: pierce ? [] : undefined,
         });
       }
       f.reloadT = f.def.reloadMs / 1000;
@@ -376,10 +491,17 @@ export class Match {
       f.deaths++;
       f.respawnT = this.modeId === 'training' ? 2 : 3;
       if (owner && owner.id !== f.id) owner.kills++;
-      // drop stele
-      if (this.modeId === 'starrush' && f.stars > 0) {
+      // drop stele/geme la moarte (starrush + gemgrab)
+      if ((this.modeId === 'starrush' || this.modeId === 'gemgrab') && f.stars > 0) {
         for (let i = 0; i < f.stars; i++) this.dropStar(f.x + (Math.random() - 0.5) * 2, f.z + (Math.random() - 0.5) * 2);
         f.stars = 0;
+      }
+      // drop cuburi de putere la moarte (showdown)
+      if (this.modeId === 'showdown' && f.powerups > 0) {
+        for (let i = 0; i < f.powerups; i++) {
+          this.cubes.push({ id: uid(), x: f.x + (Math.random() - 0.5) * 2, z: f.z + (Math.random() - 0.5) * 2 });
+        }
+        f.powerups = 0;
       }
       this.events.push({ type: 'ko', id: f.id, killer: killerId, x: f.x, z: f.z });
       // respawn dummies training cu HP plin

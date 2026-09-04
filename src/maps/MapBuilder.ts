@@ -95,21 +95,47 @@ export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
   ground.receiveShadow = settings.shadows;
   group.add(ground);
 
-  // margine neon
-  const edgeMat = new THREE.MeshBasicMaterial({ color: 0x7af0ff });
-  disposables.push(edgeMat);
-  const edgeGeo = new THREE.BoxGeometry(def.size + 1.2, 0.5, 0.4);
-  disposables.push(edgeGeo);
-  for (const [x, z, w, d] of [
-    [0, -half - 0.4, def.size + 1.2, 0.4],
-    [0, half + 0.4, def.size + 1.2, 0.4],
-    [-half - 0.4, 0, 0.4, def.size + 1.2],
-    [half + 0.4, 0, 0.4, def.size + 1.2],
-  ]) {
-    const e = new THREE.Mesh(edgeGeo, edgeMat);
-    e.scale.set(w / (def.size + 1.2), 1, d / 0.4);
-    e.position.set(x, 0.25, z);
-    group.add(e);
+  // gard perimetral stil Brawl + fâșie exterioară (fără void pe margine)
+  const fenceMat = new THREE.MeshLambertMaterial({ color: 0x6b4a2b });
+  const fenceTopMat = new THREE.MeshLambertMaterial({ color: 0x8a5f36 });
+  disposables.push(fenceMat, fenceTopMat);
+  {
+    const t = 0.5; // grosime gard
+    const y = 0.55;
+    const mkFence = (w: number, d: number, x: number, z: number) => {
+      const geo = new THREE.BoxGeometry(w, 1.1, d);
+      disposables.push(geo);
+      const m = new THREE.Mesh(geo, fenceMat);
+      m.position.set(x, y, z);
+      group.add(m);
+      const capGeo = new THREE.BoxGeometry(w + 0.1, 0.16, d + 0.1);
+      disposables.push(capGeo);
+      const cap = new THREE.Mesh(capGeo, fenceTopMat);
+      cap.position.set(x, y + 0.63, z);
+      group.add(cap);
+    };
+    const F = half + 1.2;
+    mkFence(def.size + 3.4, t, 0, -F);
+    mkFence(def.size + 3.4, t, 0, F);
+    mkFence(t, def.size + 3.4, -F, 0);
+    mkFence(t, def.size + 3.4, F, 0);
+    // stâlpi la colțuri
+    const postGeo = new THREE.BoxGeometry(0.8, 1.7, 0.8);
+    disposables.push(postGeo);
+    for (const [px, pz] of [[-F, -F], [F, -F], [-F, F], [F, F]]) {
+      const p = new THREE.Mesh(postGeo, fenceTopMat);
+      p.position.set(px, 0.85, pz);
+      group.add(p);
+    }
+    // fâșie exterioară de pământ (acoperă vidul până la orizont)
+    const skirtGeo = new THREE.PlaneGeometry(def.size * 4, def.size * 4);
+    disposables.push(skirtGeo);
+    const skirtMat = new THREE.MeshLambertMaterial({ color: 0x11142a });
+    disposables.push(skirtMat);
+    const skirt = new THREE.Mesh(skirtGeo, skirtMat);
+    skirt.rotation.x = -Math.PI / 2;
+    skirt.position.y = -0.08;
+    group.add(skirt);
   }
 
   // ziduri — blocuri cristal albastru-violet
@@ -136,11 +162,13 @@ export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
     });
   }
 
-  // tufișuri — semi-transparente (ascund eroii inamici)
+  // tufișuri — pâlcuri 3D (ascund vizual eroii inamici)
   const bushMat = new THREE.MeshLambertMaterial({
-    color: 0x2fae5f, transparent: true, opacity: 0.75,
+    color: 0x2fae5f, transparent: true, opacity: 0.85,
   });
   disposables.push(bushMat);
+  const bushDark = new THREE.MeshLambertMaterial({ color: 0x1e7a40 });
+  disposables.push(bushDark);
   const bushes = def.bushes.map((b) => ({ ...b }));
   for (const b of def.bushes) {
     const geo = new THREE.CircleGeometry(b.r, 20);
@@ -149,14 +177,47 @@ export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
     m.rotation.x = -Math.PI / 2;
     m.position.set(b.x, 0.05, b.z);
     group.add(m);
-    // margine mai închisă
-    const ringGeo = new THREE.RingGeometry(b.r - 0.25, b.r, 20);
-    disposables.push(ringGeo);
-    const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0x1e7a40 }));
-    disposables.push(ring.material as THREE.Material);
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.set(b.x, 0.06, b.z);
-    group.add(ring);
+    // 3 smocuri sferice — luptătorul „se scufundă" vizual în iarbă
+    for (let k = 0; k < 3; k++) {
+      const a = (k / 3) * Math.PI * 2 + b.x;
+      const rr = b.r * 0.45;
+      const tuftGeo = new THREE.SphereGeometry(rr, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+      disposables.push(tuftGeo);
+      const tuft = new THREE.Mesh(tuftGeo, k % 2 ? bushMat : bushDark);
+      tuft.position.set(b.x + Math.cos(a) * b.r * 0.4, 0.02, b.z + Math.sin(a) * b.r * 0.4);
+      group.add(tuft);
+    }
+  }
+
+  // mina de geme (gemgrab) — cristal mare la centru
+  if (def.mine) {
+    const mineGeo = new THREE.OctahedronGeometry(1.1);
+    disposables.push(mineGeo);
+    const mineMat = new THREE.MeshLambertMaterial({
+      color: 0xb15cff, emissive: 0x5b21b6,
+    });
+    disposables.push(mineMat);
+    const mine = new THREE.Mesh(mineGeo, mineMat);
+    mine.position.set(def.mine.x, 1.2, def.mine.z);
+    group.add(mine);
+    const padGeo = new THREE.CylinderGeometry(1.8, 2.1, 0.3, 16);
+    disposables.push(padGeo);
+    const padMat = new THREE.MeshLambertMaterial({ color: 0x2a2f60 });
+    disposables.push(padMat);
+    const pad = new THREE.Mesh(padGeo, padMat);
+    pad.position.set(def.mine.x, 0.15, def.mine.z);
+    group.add(pad);
+  }
+
+  // platforme seif (heist)
+  for (const s of def.safes ?? []) {
+    const padGeo = new THREE.BoxGeometry(4.4, 0.3, 4.4);
+    disposables.push(padGeo);
+    const padMat = new THREE.MeshLambertMaterial({ color: s.team === 0 ? 0x1e3a8a : 0x7f1d1d });
+    disposables.push(padMat);
+    const pad = new THREE.Mesh(padGeo, padMat);
+    pad.position.set(s.x, 0.15, s.z);
+    group.add(pad);
   }
 
   // lumini
