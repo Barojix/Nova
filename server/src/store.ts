@@ -26,12 +26,12 @@ export interface Account {
   equippedSkin: Record<string, string>;
   questsClaimed: string[];
   heroPower: Record<string, number>;
+  heroTrophies: Record<string, number>;
   friends: string[];
   incoming: string[];
   outgoing: string[];
   createdAt: number;
 }
-
 export interface PublicProfile {
   name: string;
   coins: number;
@@ -47,10 +47,10 @@ export interface PublicProfile {
   equippedSkin: Record<string, string>;
   questsClaimed: string[];
   heroPower: Record<string, number>;
+  heroTrophies: Record<string, number>;
 }
 
-const DIR = process.env.DATA_DIR || join(process.cwd(), 'data');
-const FILE = join(DIR, 'accounts.json');
+const DIR = process.env.DATA_DIR || join(process.cwd(), 'data');const FILE = join(DIR, 'accounts.json');
 
 const NAME_RE = /^[A-Za-z0-9_]{3,14}$/;
 
@@ -66,6 +66,7 @@ export function toPublic(a: Account): PublicProfile {
     skins: [...a.skins], equippedSkin: { ...a.equippedSkin },
     questsClaimed: [...a.questsClaimed],
     heroPower: { ...a.heroPower },
+    heroTrophies: { ...(a.heroTrophies ?? {}) },
   };
 }
 
@@ -89,6 +90,7 @@ class Store {
         a.equippedSkin ??= {};
         a.questsClaimed ??= [];
         a.heroPower ??= {};
+        a.heroTrophies ??= {};
         a.friends ??= [];
         a.incoming ??= [];
         a.outgoing ??= [];
@@ -136,6 +138,7 @@ class Store {
       wins: 0, kills: 0, supers: 0, stars: 0,
       skins: [], equippedSkin: {}, questsClaimed: [],
       heroPower: {}, friends: [], incoming: [], outgoing: [],
+      heroTrophies: {},
       createdAt: Date.now(),
     };
     this.issueToken(a);
@@ -169,10 +172,10 @@ class Store {
     return a;
   }
 
-  applyMatchById(id: string, won: boolean, kills: number, supers = 0, stars = 0): PublicProfile | null {
+  applyMatchById(id: string, won: boolean, kills: number, supers = 0, stars = 0, heroId = ''): PublicProfile | null {
     const a = this.accounts.get(id);
     if (!a) return null;
-    return this.applyMatch(a, won, kills, supers, stars);
+    return this.applyMatch(a, won, kills, supers, stars, heroId);
   }
 
   private issueToken(a: Account) {
@@ -197,11 +200,15 @@ class Store {
   }
 
   /** Recompense validate server-side + level-up. Returnează profilul actualizat. */
-  applyMatch(a: Account, won: boolean, kills: number, supers = 0, stars = 0): PublicProfile {
+  applyMatch(a: Account, won: boolean, kills: number, supers = 0, stars = 0, heroId = '') {
     const coins = won ? MATCH_REWARDS.winCoins : MATCH_REWARDS.loseCoins;
     const xp = won ? MATCH_REWARDS.winXp : MATCH_REWARDS.loseXp;
     this.addRewards(a, coins, xp);
-    a.trophies = Math.max(0, a.trophies + (won ? MATCH_REWARDS.trophyWin : MATCH_REWARDS.trophyLose));
+    const trophyDelta = won ? MATCH_REWARDS.trophyWin : MATCH_REWARDS.trophyLose;
+    a.trophies = Math.max(0, a.trophies + trophyDelta);
+    if (heroId) {
+      a.heroTrophies[heroId] = Math.max(0, (a.heroTrophies[heroId] ?? 0) + trophyDelta);
+    }
     a.kills += kills;
     a.supers += supers;
     a.stars += stars;

@@ -275,6 +275,7 @@ function snapOf(room: Room): Extract<ServerMsg, { t: 'snap' }> {
       hp: Math.max(0, Math.round(f.hp)), maxHp: f.def.hp,
       alive: f.alive, team: f.team, heroId: f.heroId, name: f.name,
       kills: f.kills, stars: f.stars, superReady: f.superReady,
+      ammo: f.ammo, powerups: f.powerups,
     })),
     bullets: m.bullets.map((b) => ({ x: b.x, z: b.z, dx: b.dx, dz: b.dz, super: b.isSuper, color: b.color, big: b.big })),
     stars: m.stars.map((s) => ({ id: s.id, x: s.x, z: s.z })),
@@ -390,6 +391,7 @@ wss.on('connection', (ws: WebSocket, req) => {
         isBot: false, isLocal: false,
         x: sp.x + (Math.random() - 0.5) * 2, z: sp.z + (Math.random() - 0.5) * 4,
         facing: 0, hp: def.hp, alive: true, respawnT: 0, reloadT: 0,
+        ammo: 3, ammoT: 0,
         superCharge: 0, superReady: false, supersUsed: 0, kills: 0, deaths: 0, stars: 0,
         power, powerups: 0,
         aiT: 0, aiTx: 0, aiTz: 0, aiMode: 'fight',
@@ -412,7 +414,7 @@ wss.on('connection', (ws: WebSocket, req) => {
           id: uid(), name: BOT_NAMES[i % BOT_NAMES.length], heroId: bh, def: bdef, team: bt,
           isBot: true, isLocal: false,
           x: bsp.x, z: bsp.z, facing: 0, hp: bdef.hp, alive: true,
-          respawnT: 0, reloadT: 0, superCharge: 0, superReady: false, supersUsed: 0,
+          respawnT: 0, reloadT: 0, ammo: 3, ammoT: 0, superCharge: 0, superReady: false, supersUsed: 0,
           kills: 0, deaths: 0, stars: 0, power: 1, powerups: 0,
           aiT: 0, aiTx: 0, aiTz: 0, aiMode: 'fight',
         });
@@ -674,7 +676,7 @@ wss.on('connection', (ws: WebSocket, req) => {
             id: fid, name: pl.name, heroId: hero, def, team,
             isBot: false, isLocal: false,
             x: sp.x, z: sp.z, facing: 0, hp: def.hp, alive: true,
-            respawnT: 0, reloadT: 0, superCharge: 0, superReady: false,
+            respawnT: 0, reloadT: 0, ammo: 3, ammoT: 0, superCharge: 0, superReady: false,
             supersUsed: 0, kills: 0, deaths: 0, stars: 0, power, powerups: 0,
             aiT: 0, aiTx: 0, aiTz: 0, aiMode: 'fight',
           });
@@ -761,7 +763,7 @@ setInterval(() => {
           const won = f ? f.team === m.winner : false;
           if (p.accountId) {
             const profile = store.applyMatchById(
-              p.accountId, won, f?.kills ?? 0, f?.supersUsed ?? 0, f?.stars ?? 0
+              p.accountId, won, f?.kills ?? 0, f?.supersUsed ?? 0, f?.stars ?? 0, f?.heroId ?? ''
             );
             send(p.ws, {
               t: 'reward',

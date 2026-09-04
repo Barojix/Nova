@@ -14,6 +14,7 @@ export interface HeroRig {
   playAttack: () => void;
   playHit: () => void;
   playDeath: (cb: () => void) => void;
+  setSuperReady: (ready: boolean) => void;
   update: (dt: number, moving: boolean, time: number) => void;
 }
 
@@ -29,8 +30,14 @@ export function buildHero(def: HeroDef, skinColor?: number): HeroRig {
   const main = new THREE.Color(skinColor ?? def.color);
   const accent = new THREE.Color(def.accent);
 
+  // variantă vizuală per erou (0/1/2 din hash id): talie + accesorii cască
+  let hv = 0;
+  for (const ch of def.id) hv = (hv * 31 + ch.charCodeAt(0)) % 3;
   const bodyMat = new THREE.MeshLambertMaterial({ color: main });
   const body = new THREE.Mesh(bodyGeo, bodyMat);
+  if (hv === 0) body.scale.set(1.18, 0.92, 1.18);       // masiv
+  else if (hv === 1) body.scale.set(0.9, 1.16, 0.9);    // înalt
+  else body.scale.set(0.85, 0.85, 0.85);                // compact
   body.position.y = 0.85;
   group.add(body);
 
@@ -53,6 +60,42 @@ export function buildHero(def: HeroDef, skinColor?: number): HeroRig {
   );
   helm.position.y = 1.82;
   group.add(helm);
+  // accesorii cască per variantă (siluete diferite)
+  const helmMat = new THREE.MeshLambertMaterial({ color: main });
+  if (hv === 0) {
+    // coarne
+    for (const side of [-1, 1]) {
+      const horn = new THREE.Mesh(
+        new THREE.ConeGeometry(0.12, 0.42, 6),
+        new THREE.MeshLambertMaterial({ color: accent })
+      );
+      horn.position.set(side * 0.42, 2.1, 0);
+      horn.rotation.z = -side * 0.7;
+      group.add(horn);
+    }
+  } else if (hv === 1) {
+    // antenă
+    const rod = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.04, 0.5, 6),
+      helmMat
+    );
+    rod.position.set(0, 2.3, 0);
+    group.add(rod);
+    const bulb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.11, 8, 6),
+      new THREE.MeshBasicMaterial({ color: accent })
+    );
+    bulb.position.set(0, 2.58, 0);
+    group.add(bulb);
+  } else {
+    // creastă
+    const crest = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.34, 0.55),
+      new THREE.MeshLambertMaterial({ color: accent })
+    );
+    crest.position.set(0, 2.24, -0.05);
+    group.add(crest);
+  }
 
   // ochi
   const eyeMat = new THREE.MeshBasicMaterial({ color: 0x141828 });
@@ -62,8 +105,10 @@ export function buildHero(def: HeroDef, skinColor?: number): HeroRig {
   eR.position.set(0.16, 1.78, 0.4);
   group.add(eL, eR);
 
-  // armă
+  // armă (mărime după rază: lunetiștii au țeavă lungă)
+  const gunScale = 0.8 + Math.min(1.4, def.range / 10);
   const gun = new THREE.Mesh(gunGeo, new THREE.MeshLambertMaterial({ color: 0x2a2f45 }));
+  gun.scale.set(1, gunScale, 1);
   gun.position.set(0.55, 1.0, 0.35);
   gun.rotation.x = Math.PI / 2 - 0.15;
   group.add(gun);
@@ -96,11 +141,19 @@ export function buildHero(def: HeroDef, skinColor?: number): HeroRig {
   let hitT = 0;
   let deadT = -1;
   let deathCb: (() => void) | null = null;
+  let superR = false;
+  let teamHex = 0x2d7dff;
+  const baseScale = body.scale.clone();
 
   return {
     group, body, head, gun, ring, shadow,
     setTeamColor(hex: number) {
-      (ring.material as THREE.MeshBasicMaterial).color.setHex(hex);
+      teamHex = hex;
+      if (!superR) (ring.material as THREE.MeshBasicMaterial).color.setHex(hex);
+    },
+    setSuperReady(ready: boolean) {
+      superR = ready;
+      (ring.material as THREE.MeshBasicMaterial).color.setHex(ready ? 0xff9f1c : teamHex);
     },
     playAttack() { attackT = 0.22; },
     playHit() { hitT = 0.18; },
@@ -119,19 +172,30 @@ export function buildHero(def: HeroDef, skinColor?: number): HeroRig {
         }
         return;
       }
-      // idle bob + alergare
+      // idle bob + alergare + aplecare la mișcare
       const bob = moving ? Math.sin(time * 11) * 0.09 : Math.sin(time * 2.4) * 0.045;
       body.position.y = 0.85 + bob;
       head.position.y = 1.75 + bob * 1.2;
       helm.position.y = 1.82 + bob * 1.2;
+      group.rotation.x = moving ? 0.12 : 0; // aplecare înainte la fugă
+      // puls auriu pe inel când super-ul e gata
+      if (superR) {
+        const p = 0.75 + Math.sin(time * 6) * 0.25;
+        (ring.material as THREE.MeshBasicMaterial).opacity = p;
+        const s = 1 + Math.sin(time * 6) * 0.06;
+        ring.scale.set(s, s, 1);
+      } else {
+        (ring.material as THREE.MeshBasicMaterial).opacity = 0.9;
+        ring.scale.set(1, 1, 1);
+      }
       group.rotation.y += 0; // orientarea o setează GameManager
       if (attackT > 0) {
         attackT -= dt;
         const k = attackT / 0.22;
         gun.position.z = 0.35 + (1 - k) * 0.0 - k * 0.35;
-        body.scale.set(1 + k * 0.08, 1 - k * 0.06, 1 + k * 0.08);
+        body.scale.set(baseScale.x * (1 + k * 0.08), baseScale.y * (1 - k * 0.06), baseScale.z * (1 + k * 0.08));
       } else {
-        body.scale.set(1, 1, 1);
+        body.scale.copy(baseScale);
       }
       if (hitT > 0) {
         hitT -= dt;

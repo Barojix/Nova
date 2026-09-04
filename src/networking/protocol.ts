@@ -64,6 +64,7 @@ export interface PublicProfile {
   equippedSkin: Record<string, string>;
   questsClaimed: string[];
   heroPower: Record<string, number>;
+  heroTrophies: Record<string, number>;
 }
 
 export interface SafeSnap { team: number; hp: number; maxHp: number; x: number; z: number }
@@ -88,6 +89,7 @@ export interface SnapFighter {
   id: number; x: number; z: number; facing: number; hp: number; maxHp: number;
   alive: boolean; team: number; heroId: string; name: string;
   kills: number; stars: number; superReady: boolean;
+  ammo: number; powerups: number;
 }
 
 export interface SnapBullet {

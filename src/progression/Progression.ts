@@ -19,7 +19,11 @@ export const Progression = {
     if (r.isStarPlayer) xp += MATCH_REWARDS.starPlayerXp;
     d.coins += coins;
     d.xp += xp;
-    d.trophies = Math.max(0, d.trophies + (r.won ? MATCH_REWARDS.trophyWin : MATCH_REWARDS.trophyLose));
+    const trophyDelta = r.won ? MATCH_REWARDS.trophyWin : MATCH_REWARDS.trophyLose;
+    d.trophies = Math.max(0, d.trophies + trophyDelta);
+    // trofee per eroul jucat (pentru sortarea din pagina EROI)
+    const hid = save.data.selectedHero;
+    d.heroTrophies[hid] = Math.max(0, (d.heroTrophies[hid] ?? 0) + trophyDelta);
     d.kills += r.kills;
     d.stars += r.stars;
     d.supers += r.supers;

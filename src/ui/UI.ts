@@ -39,6 +39,7 @@ export class UI implements IGameUI {
   private friendList: FriendEntry[] = [];
   private friendIncoming: FriendEntry[] = [];
   private friendOutgoing: string[] = [];
+  private heroSort: 'trophies' | 'rarity' | 'power' = 'rarity';
 
   constructor(private root: HTMLElement) {
     this.playerName =
@@ -394,11 +395,6 @@ export class UI implements IGameUI {
     <div id="hud">
       <div class="hud-top">
         <div class="scorebox"><small id="hud-mode">KNOCKOUT</small><span id="hud-score">0 : 0</span></div>
-        <div class="hpwrap">
-          <div class="hpbar" id="hud-hpbar"><div id="hud-hpfill"></div></div>
-          <div class="hptext" id="hud-hptext">3400</div>
-          <div class="superbar" id="hud-superbar"><div id="hud-superfill"></div></div>
-        </div>
         <button class="pausebtn" id="btn-pause">⏸</button>
       </div>
       <div id="killfeed"></div>
@@ -710,16 +706,26 @@ export class UI implements IGameUI {
     if (which === 'brawlers') {
       title = `🦸 EROI <span style="font-size:13px">${HEROES.length} eroi • 🪙 ${prof?.coins ?? d.coins}</span>`;
       const powers = prof?.heroPower ?? d.heroPower;
-      const sorted = [...HEROES].sort((a, b) =>
-        RARITY_ORDER.indexOf(a.rarity) - RARITY_ORDER.indexOf(b.rarity));
-      body = `<div class="herogrid">` + sorted.map((h) => {
+      const trophies = prof?.heroTrophies ?? d.heroTrophies;
+      const pwOf = (id: string) => Math.max(1, Math.min(POWER_MAX, Math.round(powers[id] ?? 1)));
+      const sorted = [...HEROES].sort((a, b) => {
+        if (this.heroSort === 'trophies') return (trophies[b.id] ?? 0) - (trophies[a.id] ?? 0);
+        if (this.heroSort === 'power') return pwOf(b.id) - pwOf(a.id);
+        return RARITY_ORDER.indexOf(a.rarity) - RARITY_ORDER.indexOf(b.rarity);
+      });
+      const segBtn = (id: 'trophies' | 'rarity' | 'power', label: string) =>
+        `<button data-sort="${id}" class="${this.heroSort === id ? 'sel' : ''}">${label}</button>`;
+      body = `<div class="setrow"><label>Sortează</label><div class="seg" id="seg-sort">${segBtn('trophies', '🏆 Trofee')}${segBtn('rarity', '💎 Raritate')}${segBtn('power', '⚡ Putere')}</div></div>`
+      + `<div class="herogrid">` + sorted.map((h) => {
         const sel = d.selectedHero === h.id;
-        const pw = Math.max(1, Math.min(POWER_MAX, Math.round(powers[h.id] ?? 1)));
+        const pw = pwOf(h.id);
         const maxed = pw >= POWER_MAX;
         const cost = maxed ? 0 : (UPGRADE_COST[pw] ?? 0);
+        const ht = trophies[h.id] ?? 0;
         return `<div class="hcard ${sel ? 'sel' : ''}" style="--rc:${RARITY_COLOR[h.rarity]}">
           <div class="hface" style="background:#${h.color.toString(16).padStart(6, '0')}">${HERO_FACE[h.id] ?? '🦸'}</div>
           <div class="hpow">⚡${pw}</div>
+          <div class="htroph">🏆${ht}</div>
           <div class="hinf">
             <div class="nm">${h.name}</div>
             <div class="tt" style="color:${RARITY_COLOR[h.rarity]}">${h.rarity.toUpperCase()} • ${h.kind.toUpperCase()}</div>
@@ -936,6 +942,14 @@ export class UI implements IGameUI {
       });
     });
     // setări bindings
+    page.querySelectorAll('#seg-sort button').forEach((b) => {
+      b.addEventListener('click', () => {
+        this.heroSort = (b as HTMLElement).dataset.sort as 'trophies' | 'rarity' | 'power';
+        audio.sfx('click');
+        page.remove();
+        this.openPage('brawlers');
+      });
+    });
     page.querySelectorAll('[data-upgrade]').forEach((b) => {
       b.addEventListener('click', async () => {
         const hid = (b as HTMLElement).dataset.upgrade!;

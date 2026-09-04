@@ -47,6 +47,8 @@ interface RigView {
   barCtx: CanvasRenderingContext2D;
   barTex: THREE.CanvasTexture;
   lastHp: number;
+  lastAmmo: number;
+  lastSuper: boolean;
   name: string;
 }
 
@@ -82,6 +84,9 @@ export class GameManager {
   private safeMeshes: { box: THREE.Mesh; bar: THREE.Mesh; team: number }[] = [];
   private safeGeo = new THREE.BoxGeometry(2.2, 2.6, 2.2);
   private gasRing: THREE.Mesh | null = null;
+  /** ghidaj țintire stil Brawl (linii raza + evantaiul atacului) */
+  private aimGroup = new THREE.Group();
+  private aimLines: THREE.Line[] = [];
   private starGeo = new THREE.OctahedronGeometry(0.45);
   private starMat = new THREE.MeshBasicMaterial({ color: 0xffe066 });
 
@@ -126,9 +131,9 @@ export class GameManager {
     // AA doar pe high — pe telefon e cel mai mare consumator de baterie/GPU
     const aa = settings.data.quality === 'high';
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: aa, powerPreference: 'high-performance' });
-    this.renderer.setClearColor(0x0b0e1d);
+    this.renderer.setClearColor(0x11142a);
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200);
-    this.scene.background = new THREE.Color(0x0b0e1d);
+    this.scene.background = new THREE.Color(0x11142a);
     this.controls = new TouchControls(touchRoot);
     this.controls.setVisible(false);
     this.floaters = new Floaters(floaterRoot);
@@ -381,6 +386,7 @@ export class GameManager {
       this.shake.add(0.35);
     } else if (e === 'hit' && d.x !== undefined) {
       audio.sfx('hit');
+      if (d.id !== undefined) this.views.get(d.id)?.rig.playHit();
       this.particles.spawn(d.x, 1.2, d.z!, 0xff5a5a, 8, 5, 0.4);
     } else if (e === 'ko') {
       audio.sfx('ko');
@@ -493,24 +499,26 @@ export class GameManager {
     const rig = buildHero(def, Shop.equippedColor(heroId, def.color));
     rig.setTeamColor(team === 0 ? 0x2d7dff : 0xff3b6b);
     this.scene.add(rig.group);
-    // bară HP + nume
+    // bară HP + nume + gloanțe (stil Brawl, deasupra eroului)
     const cnv = document.createElement('canvas');
-    cnv.width = 128; cnv.height = 32;
+    cnv.width = 128; cnv.height = 46;
     const ctx = cnv.getContext('2d')!;
     const tex = new THREE.CanvasTexture(cnv);
     const bar = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
-    bar.scale.set(2.2, 0.55, 1);
-    bar.position.y = 2.6;
+    bar.scale.set(2.4, 0.86, 1);
+    bar.position.y = 2.75;
     rig.group.add(bar);
-    this.views.set(id, { rig, bar, barCanvas: cnv, barCtx: ctx, barTex: tex, lastHp: -1, name });
+    this.views.set(id, { rig, bar, barCanvas: cnv, barCtx: ctx, barTex: tex, lastHp: -1, lastAmmo: -1, lastSuper: false, name });
     audio.sfx('spawn');
   }
 
-  private drawBar(v: RigView, hp: number, maxHp: number) {
-    if (Math.abs(hp - v.lastHp) < 1) return;
+  private drawBar(v: RigView, hp: number, maxHp: number, ammo = 3, superReady = false) {
+    if (Math.abs(hp - v.lastHp) < 1 && ammo === v.lastAmmo && superReady === v.lastSuper) return;
     v.lastHp = hp;
+    v.lastAmmo = ammo;
+    v.lastSuper = superReady;
     const c = v.barCtx;
-    c.clearRect(0, 0, 128, 32);
+    c.clearRect(0, 0, 128, 46);
     c.font = 'bold 13px system-ui';
     c.textAlign = 'center';
     c.fillStyle = 'rgba(0,0,0,0.55)';
@@ -522,6 +530,18 @@ export class GameManager {
     const pct = clamp(hp / maxHp, 0, 1);
     c.fillStyle = pct > 0.5 ? '#3ddc84' : pct > 0.25 ? '#ffb020' : '#ff3b6b';
     c.fillRect(15, 18, 98 * pct, 7);
+    // pipuri ammo (3) + fulger când super-ul e gata
+    for (let i = 0; i < 3; i++) {
+      c.fillStyle = i < ammo ? '#ffe066' : 'rgba(255,255,255,0.18)';
+      c.beginPath();
+      c.arc(48 + i * 16, 36, 6, 0, Math.PI * 2);
+      c.fill();
+    }
+    if (superReady) {
+      c.font = 'bold 15px system-ui';
+      c.fillStyle = '#ff9f1c';
+      c.fillText('💥', 112, 41);
+    }
     v.barTex.needsUpdate = true;
   }
 
@@ -588,6 +608,7 @@ export class GameManager {
     this.updateCamera(dt);
     this.particles.update(dt);
     this.shake.update(dt);
+    this.updateAimGuide();
     if (doRender) this.renderer.render(this.scene, this.camera);
   }
 
@@ -687,6 +708,8 @@ export class GameManager {
     } else if (e.type === 'hit') {
       if (e.damage > 0) {
         audio.sfx('hit');
+        // flash alb pe victimă
+        this.views.get(e.id)?.rig.playHit();
         this.particles.spawn(e.x, 1.2, e.z, 0xff5a5a, 7, 5, 0.35);
         this.w2s(e.x, 1.8, e.z, (p) =>
           this.floaters.spawn(() => p, e.x, 2, e.z, `-${e.damage}`, 'dmg'));
@@ -910,9 +933,10 @@ export class GameManager {
         v.rig.group.position.set(f.x, 0, f.z);
         v.rig.group.rotation.y = f.facing;
         v.rig.update(dt, moving, this.clock);
+        v.rig.setSuperReady(f.superReady);
         v.bar.visible = f.alive && !hidden;
         v.bar.position.y = 2.6;
-        this.drawBar(v, f.hp, f.def.hp);
+        this.drawBar(v, f.hp, f.def.hp, f.ammo, f.superReady);
       }
       // gloanțe: pool de mesh-uri sincronizat 1:1 cu sim-ul
       this.syncBullets(this.match.bullets.map((b) => ({
@@ -936,7 +960,8 @@ export class GameManager {
         const hidden = this.shouldHideSnap(f);
         g.visible = f.alive && !hidden;
         v.rig.update(dt, true, this.clock);
-        this.drawBar(v, f.hp, f.maxHp);
+        v.rig.setSuperReady(f.superReady);
+        this.drawBar(v, f.hp, f.maxHp, f.ammo, f.superReady);
         v.bar.visible = f.alive && !hidden;
       }
       this.syncBullets(this.remoteBullets);
@@ -1130,8 +1155,72 @@ export class GameManager {
     }
   }
 
-  private updateGas(r: number) {
-    // inel toxic: vizibil doar în showdown când gazul s-a strâns sub hartă
+  /** Ghidaj țintire stil Brawl: cât ții stick-ul de foc, vezi raza + evantaiul. */
+  private updateAimGuide() {
+    const st = this.controls.state;
+    const active = st.aiming && this.state === 'battle' && !this.paused;
+    let px = 0, pz = 0, alive = false, heroId = '';
+    if (this.match && !this.online) {
+      const local = this.localFighter();
+      if (local) {
+        px = local.x; pz = local.z; alive = local.alive; heroId = local.heroId;
+      }
+    } else {
+      const me = this.remoteFighters.get(this.localId);
+      if (me) {
+        const v = this.views.get(this.localId);
+        px = v ? v.rig.group.position.x : me.x;
+        pz = v ? v.rig.group.position.z : me.z;
+        alive = me.alive; heroId = me.heroId;
+      }
+    }
+    if (!active || !alive || !heroId) {
+      this.aimGroup.visible = false;
+      return;
+    }
+    const def = heroById(heroId);
+    const isSuper = st.aimSuper;
+    const range = isSuper ? def.superRange : def.range;
+    let dx = st.ax, dz = st.az;
+    const dl = Math.hypot(dx, dz);
+    if (dl < 0.1) {
+      const local = this.match && !this.online ? this.localFighter() : undefined;
+      const fa = local ? local.facing : 0;
+      dx = Math.sin(fa); dz = Math.cos(fa);
+    } else {
+      dx /= dl; dz /= dl;
+    }
+    const count = Math.min(5, Math.max(1, isSuper ? def.superCount : def.projectiles));
+    const gap = 0.16;
+    const color = isSuper ? 0xff9f1c : def.accent;
+    while (this.aimLines.length < count) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+      const line = new THREE.Line(
+        geo,
+        new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthTest: false })
+      );
+      line.frustumCulled = false;
+      this.aimLines.push(line);
+      this.aimGroup.add(line);
+      if (!this.aimGroup.parent) this.scene.add(this.aimGroup);
+    }
+    this.aimLines.forEach((line, i) => {
+      line.visible = i < count;
+      if (i >= count) return;
+      const off = (i - (count - 1) / 2) * gap;
+      const c = Math.cos(off), s = Math.sin(off);
+      const rx = dx * c - dz * s, rz = dx * s + dz * c;
+      const pos = line.geometry.getAttribute('position') as THREE.BufferAttribute;
+      pos.setXYZ(0, px, 1.05, pz);
+      pos.setXYZ(1, px + rx * range, 1.05, pz + rz * range);
+      pos.needsUpdate = true;
+      (line.material as THREE.LineBasicMaterial).color.setHex(color);
+    });
+    this.aimGroup.visible = true;
+  }
+
+  private updateGas(r: number) {    // inel toxic: vizibil doar în showdown când gazul s-a strâns sub hartă
     if (this.modeId !== 'showdown' || r <= 0) {
       if (this.gasRing) this.gasRing.visible = false;
       return;

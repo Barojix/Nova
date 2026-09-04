@@ -127,10 +127,14 @@ export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
       p.position.set(px, 0.85, pz);
       group.add(p);
     }
-    // fâșie exterioară de pământ (acoperă vidul până la orizont)
+    // fâșie exterioară cu ACELAȘI pământ (se pierde marginea hărții în orizont)
+    const skirtTex = new THREE.CanvasTexture(cnv);
+    skirtTex.wrapS = skirtTex.wrapT = THREE.RepeatWrapping;
+    skirtTex.repeat.set((def.size * 4) / 8, (def.size * 4) / 8);
+    disposables.push(skirtTex);
     const skirtGeo = new THREE.PlaneGeometry(def.size * 4, def.size * 4);
     disposables.push(skirtGeo);
-    const skirtMat = new THREE.MeshLambertMaterial({ color: 0x11142a });
+    const skirtMat = new THREE.MeshLambertMaterial({ map: skirtTex, color: 0x8a8fa8 });
     disposables.push(skirtMat);
     const skirt = new THREE.Mesh(skirtGeo, skirtMat);
     skirt.rotation.x = -Math.PI / 2;
@@ -233,8 +237,8 @@ export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
   }
   group.add(dir);
 
-  // ceață subtilă pentru adâncime
-  scene.fog = new THREE.Fog(0x0b0e1d, 38, 70);
+  // ceață densă pentru adâncime (topește marginea în orizont)
+  scene.fog = new THREE.Fog(0x11142a, 30, 62);
 
   scene.add(group);
   return {
