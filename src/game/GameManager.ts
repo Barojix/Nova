@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Match, type PlayerSpec, type SimFighter, type SimInput } from './Match';
 import { botInput } from './Bots';
 import { buildMap, type BuiltMap } from '../maps/MapBuilder';
-import { canSee } from './visibility';
+import { canSee, inBushAt } from './visibility';
 import { mapById, mapForMode } from '../data/maps';
 import { heroById, HERO_IDS } from '../data/heroes';
 import { buildHero, type HeroRig } from '../characters/HeroFactory';
@@ -18,6 +18,7 @@ import { Progression } from '../progression/Progression';
 import { NetClient } from '../multiplayer/NetClient';
 import type { SnapFighter } from '../networking/protocol';
 import { perf } from '../core/Perf';
+import { T } from '../i18n/lang';
 import { clamp } from '../utils/math';
 
 // Interfața pe care UI-ul o implementează (HUD + ecrane de meci).
@@ -33,6 +34,7 @@ export interface IGameUI {
   countdown(text: string): void;
   respawn(t: number): void;
   banner(text: string, sub?: string): void;
+  flash(color: string): void;
   showEnd(o: {
     won: boolean; title: string; reason: string; kills: number;
     coins: number; xp: number; trophies: number; starPlayer: boolean;
@@ -49,6 +51,8 @@ interface RigView {
   lastHp: number;
   lastAmmo: number;
   lastSuper: boolean;
+  sizeMul: number;
+  faded: boolean;
   name: string;
 }
 
@@ -87,6 +91,8 @@ export class GameManager {
   /** ghidaj țintire stil Brawl (linii raza + evantaiul atacului) */
   private aimGroup = new THREE.Group();
   private aimLines: THREE.Line[] = [];
+  /** inele de șoc la KO (pool reutilizabil) */
+  private shockRings: { mesh: THREE.Mesh; t: number }[] = [];
   private starGeo = new THREE.OctahedronGeometry(0.45);
   private starMat = new THREE.MeshBasicMaterial({ color: 0xffe066 });
 
@@ -273,8 +279,9 @@ export class GameManager {
     const hb = () => heroes[Math.floor(Math.random() * heroes.length)];
     const botPower = () => 1 + Math.floor(Math.random() * 3);
     const myPower = Math.max(1, Math.min(11, Math.round(save.data.heroPower[heroId] ?? 1)));
+    const myGadget = save.data.heroGadgets[heroId];
     if (modeId === 'showdown') {
-      const specs: PlayerSpec[] = [{ name: playerName, heroId, team: 0, isBot: false, isLocal: true, power: myPower }];
+      const specs: PlayerSpec[] = [{ name: playerName, heroId, team: 0, isBot: false, isLocal: true, power: myPower, gadget: myGadget }];
       for (let i = 0; i < 9; i++) {
         specs.push({ name: nb(), heroId: hb(), team: i + 1, isBot: true, power: botPower() });
       }
@@ -282,7 +289,7 @@ export class GameManager {
     }
     if (modeId === 'training') {
       return [
-        { name: playerName, heroId, team: 0, isBot: false, isLocal: true, power: myPower },
+        { name: playerName, heroId, team: 0, isBot: false, isLocal: true, power: myPower, gadget: myGadget },
         { name: 'Țintă A', heroId: 'moss', team: 1, isBot: true, power: 1 },
         { name: 'Țintă B', heroId: 'volt', team: 1, isBot: true, power: 1 },
         { name: 'Țintă C', heroId: 'blip', team: 1, isBot: true, power: 1 },
@@ -290,7 +297,7 @@ export class GameManager {
     }
     // echipe 3v3
     return [
-      { name: playerName, heroId, team: 0, isBot: false, isLocal: true, power: myPower },
+      { name: playerName, heroId, team: 0, isBot: false, isLocal: true, power: myPower, gadget: myGadget },
       { name: nb(), heroId: hb(), team: 0, isBot: true, power: botPower() },
       { name: nb(), heroId: hb(), team: 0, isBot: true, power: botPower() },
       { name: nb(), heroId: hb(), team: 1, isBot: true, power: botPower() },
@@ -310,18 +317,18 @@ export class GameManager {
     this.scene.add(this.starGroup);
     this.online = false;
     this.net = new NetClient();
-    this.ui.toast('Conectare la server…');
+    this.ui.toast(T('Connecting to server…', 'Conectare la server…'));
     this.net.onStatus = (ok) => {
       if (ok) {
         this.online = true;
-        this.ui.toast('ONLINE — meci sincronizat cu serverul');
+        this.ui.toast(T('ONLINE — server-synced match', 'ONLINE — meci sincronizat cu serverul'));
       } else {
         // fallback instant la boți, fără să stricăm meciul
         if (!this.match) {
-          this.ui.toast('Server indisponibil — joc cu BOȚI (offline)');
+          this.ui.toast(T('Server unavailable — playing with BOTS (offline)', 'Server indisponibil — joc cu BOȚI (offline)'));
           this.startOffline(modeId, heroId, playerName, mapDef.id);
         } else {
-          this.ui.toast('Conexiune pierdută — continui offline');
+          this.ui.toast(T('Connection lost — continuing offline', 'Conexiune pierdută — continui offline'));
           this.online = false;
         }
       }
@@ -384,6 +391,11 @@ export class GameManager {
     } else if (e === 'super') {
       audio.sfx('super');
       this.shake.add(0.35);
+      const f = d.id !== undefined ? this.remoteFighters.get(d.id) : undefined;
+      if (f) {
+        this.spawnShock(f.x, f.z, 0xff9f1c);
+        if (d.id === this.localId) this.ui.flash('#ff9f1c44');
+      }
     } else if (e === 'hit' && d.x !== undefined) {
       audio.sfx('hit');
       if (d.id !== undefined) this.views.get(d.id)?.rig.playHit();
@@ -391,18 +403,19 @@ export class GameManager {
     } else if (e === 'ko') {
       audio.sfx('ko');
       this.shake.add(0.5);
+      if (d.x !== undefined) this.spawnShock(d.x, d.z!, 0xff5a5a);
       if (d.x !== undefined) {
         this.particles.spawn(d.x, 1, d.z!, 0xff9f1c, 22, 8, 0.7);
         this.w2s(d.x, 1.5, d.z!, (p) =>
           this.floaters.spawn(() => p, d.x!, 2, d.z!, 'KO!', 'ko'));
       }
     } else if (e === 'crate' && d.x !== undefined) {
-      audio.sfx('hit');
+      audio.sfx('crate');
       this.shake.add(0.2);
       this.particles.spawn(d.x, 0.8, d.z!, 0x8a5f36, 18, 6, 0.5);
     } else if (e === 'powerup' && d.id !== undefined) {
       const f = this.remoteFighters.get(d.id);
-      audio.sfx('coin');
+      audio.sfx('powerup');
       if (f) this.particles.spawn(f.x, 1.2, f.z, 0xff9f1c, 14, 6, 0.5);
     }
   }
@@ -459,6 +472,10 @@ export class GameManager {
     this.scene.remove(this.crateGroup);
     for (const s of this.safeMeshes) this.scene.remove(s.box, s.bar);
     this.safeMeshes = [];
+    for (const r of this.shockRings) {
+      r.t = 1;
+      r.mesh.visible = false;
+    }
     if (this.gasRing) {
       this.scene.remove(this.gasRing);
       this.gasRing.geometry.dispose();
@@ -508,11 +525,11 @@ export class GameManager {
     bar.scale.set(2.4, 0.86, 1);
     bar.position.y = 2.75;
     rig.group.add(bar);
-    this.views.set(id, { rig, bar, barCanvas: cnv, barCtx: ctx, barTex: tex, lastHp: -1, lastAmmo: -1, lastSuper: false, name });
+    this.views.set(id, { rig, bar, barCanvas: cnv, barCtx: ctx, barTex: tex, lastHp: -1, lastAmmo: -1, lastSuper: false, sizeMul: def.sizeMul ?? 1, faded: false, name });
     audio.sfx('spawn');
   }
 
-  private drawBar(v: RigView, hp: number, maxHp: number, ammo = 3, superReady = false) {
+  private drawBar(v: RigView, hp: number, maxHp: number, ammo = 3, ammoMax = 3, superReady = false) {
     if (Math.abs(hp - v.lastHp) < 1 && ammo === v.lastAmmo && superReady === v.lastSuper) return;
     v.lastHp = hp;
     v.lastAmmo = ammo;
@@ -530,11 +547,14 @@ export class GameManager {
     const pct = clamp(hp / maxHp, 0, 1);
     c.fillStyle = pct > 0.5 ? '#3ddc84' : pct > 0.25 ? '#ffb020' : '#ff3b6b';
     c.fillRect(15, 18, 98 * pct, 7);
-    // pipuri ammo (3) + fulger când super-ul e gata
-    for (let i = 0; i < 3; i++) {
+    // pipuri ammo (după erou: 1-5) + fulger când super-ul e gata
+    const n = Math.max(1, Math.min(5, ammoMax));
+    const r = n > 3 ? 4.5 : 6;
+    const startX = 64 - ((n - 1) * (r * 2 + 4)) / 2;
+    for (let i = 0; i < n; i++) {
       c.fillStyle = i < ammo ? '#ffe066' : 'rgba(255,255,255,0.18)';
       c.beginPath();
-      c.arc(48 + i * 16, 36, 6, 0, Math.PI * 2);
+      c.arc(startX + i * (r * 2 + 4), 36, r, 0, Math.PI * 2);
       c.fill();
     }
     if (superReady) {
@@ -582,7 +602,7 @@ export class GameManager {
         }
         if (this.countdownT <= 0) {
           this.state = 'battle';
-          this.ui.countdown('LUPTĂ!');
+          this.ui.countdown(T('FIGHT!', 'LUPTĂ!'));
           audio.sfx('super');
           window.setTimeout(() => this.ui.countdown(''), 700);
         }
@@ -608,6 +628,7 @@ export class GameManager {
     this.updateCamera(dt);
     this.particles.update(dt);
     this.shake.update(dt);
+    this.updateShocks(dt);
     this.updateAimGuide();
     if (doRender) this.renderer.render(this.scene, this.camera);
   }
@@ -697,6 +718,10 @@ export class GameManager {
       const f = m.fighters.find((x) => x.id === e.id);
       this.revealUntil.set(e.id, this.clock + 1);
       audio.sfx('super');
+      if (f) {
+        this.spawnShock(f.x, f.z, 0xff9f1c);
+        if (f.isLocal) this.ui.flash('#ff9f1c44');
+      }
       this.shake.add(0.3);
       if (f) {
         this.particles.spawn(f.x, 1, f.z, 0xff9f1c, 18, 7, 0.6);
@@ -746,15 +771,18 @@ export class GameManager {
       if (victim?.isLocal) {
         this.ui.respawn(3);
       }
-      // animație moarte
+      // animație moarte + undă de șoc + flash
       const v = this.views.get(e.id);
       if (v) v.rig.playDeath(() => { /* rămâne ascuns până la respawn */ });
+      this.spawnShock(e.x, e.z, 0xff5a5a);
+      if (victim?.isLocal) this.ui.flash('#ff000055');
     } else if (e.type === 'spawn') {
       const f = m.fighters.find((x) => x.id === e.id);
       const v = this.views.get(e.id);
       if (f && v) {
-        v.rig.group.scale.setScalar(1);
+        v.rig.group.scale.setScalar(v.sizeMul);
         v.rig.group.rotation.z = 0;
+        this.spawnShock(f.x, f.z, 0x7af0ff);
         this.particles.spawn(f.x, 0.5, f.z, 0x7af0ff, 12, 4, 0.5);
         audio.sfx('spawn');
         if (f.isLocal) this.ui.respawn(0);
@@ -769,7 +797,7 @@ export class GameManager {
       }
     } else if (e.type === 'powerup') {
       const f = m.fighters.find((x) => x.id === e.id);
-      audio.sfx('coin');
+      audio.sfx('powerup');
       this.shake.add(0.15);
       if (f) {
         this.particles.spawn(f.x, 1.2, f.z, 0xff9f1c, 16, 6, 0.5);
@@ -780,10 +808,11 @@ export class GameManager {
         }
       }
     } else if (e.type === 'crate') {
-      audio.sfx('hit');
+      audio.sfx('crate');
       this.shake.add(0.2);
       this.particles.spawn(e.x, 0.8, e.z, 0x8a5f36, 18, 6, 0.5);
       this.particles.spawn(e.x, 1.2, e.z, 0xff9f1c, 10, 5, 0.4);
+      this.spawnShock(e.x, e.z, 0x8a5f36);
     } else if (e.type === 'end') {
       // gestionat de tick
     }
@@ -829,15 +858,15 @@ export class GameManager {
     });
     if (won) {
       audio.sfx('win');
-      this.ui.banner('VICTORIE!', reason);
+      this.ui.banner(T('VICTORY!', 'VICTORIE!'), reason);
     } else {
       audio.sfx('lose');
-      this.ui.banner('ÎNFRÂNGERE', reason);
+      this.ui.banner(T('DEFEAT', 'ÎNFRÂNGERE'), reason);
     }
     window.setTimeout(() => {
       this.ui.showEnd({
         won,
-        title: won ? 'VICTORIE!' : 'ÎNFRÂNGERE',
+        title: won ? T('VICTORY!', 'VICTORIE!') : T('DEFEAT', 'ÎNFRÂNGERE'),
         reason,
         kills: this.kills,
         coins: res.coins, xp: res.xp,
@@ -892,17 +921,17 @@ export class GameManager {
     const won = me ? me.team === winner : false;
     if (won) {
       audio.sfx('win');
-      this.ui.banner('VICTORIE!', 'Serverul a validat rezultatul.');
+      this.ui.banner(T('VICTORY!', 'VICTORIE!'), T('Server validated the result.', 'Serverul a validat rezultatul.'));
     } else {
       audio.sfx('lose');
-      this.ui.banner('ÎNFRÂNGERE', 'Serverul a validat rezultatul.');
+      this.ui.banner(T('DEFEAT', 'ÎNFRÂNGERE'), T('Server validated the result.', 'Serverul a validat rezultatul.'));
     }
     window.setTimeout(() => {
       const rw = this.lastReward ?? { coins: 0, xp: 0, trophies: 0 };
       const troph = Auth.loggedIn && Auth.profile ? Auth.profile.trophies : save.data.trophies;
       this.ui.showEnd({
-        won, title: won ? 'VICTORIE!' : 'ÎNFRÂNGERE',
-        reason: 'Meci online validat de server.',
+        won, title: won ? T('VICTORY!', 'VICTORIE!') : T('DEFEAT', 'ÎNFRÂNGERE'),
+        reason: T('Online match validated by server.', 'Meci online validat de server.'),
         kills: me?.kills ?? 0, coins: rw.coins, xp: rw.xp,
         trophies: troph, starPlayer: false,
       });
@@ -925,8 +954,8 @@ export class GameManager {
           if (v.rig.group.scale.x < 0.05) v.rig.group.visible = false;
         } else {
           v.rig.group.visible = !hidden;
-          if (v.rig.group.scale.x < 0.5) {
-            v.rig.group.scale.setScalar(1);
+          if (v.rig.group.scale.x < 0.5 * v.sizeMul) {
+            v.rig.group.scale.setScalar(v.sizeMul);
             v.rig.group.rotation.z = 0;
           }
         }
@@ -934,9 +963,17 @@ export class GameManager {
         v.rig.group.rotation.y = f.facing;
         v.rig.update(dt, moving, this.clock);
         v.rig.setSuperReady(f.superReady);
+        // acoperire totală: în tufiș ești translucid (te vezi doar tu + echipa)
+        if (this.builtMap && f.isLocal) {
+          const inB = inBushAt(this.builtMap.bushes, f.x, f.z);
+          if (inB !== v.faded) {
+            v.faded = inB;
+            v.rig.setFaded(inB);
+          }
+        }
         v.bar.visible = f.alive && !hidden;
         v.bar.position.y = 2.6;
-        this.drawBar(v, f.hp, f.def.hp, f.ammo, f.superReady);
+        this.drawBar(v, f.hp, f.maxHp, f.ammo, f.def.ammoMax, f.superReady);
       }
       // gloanțe: pool de mesh-uri sincronizat 1:1 cu sim-ul
       this.syncBullets(this.match.bullets.map((b) => ({
@@ -961,7 +998,14 @@ export class GameManager {
         g.visible = f.alive && !hidden;
         v.rig.update(dt, true, this.clock);
         v.rig.setSuperReady(f.superReady);
-        this.drawBar(v, f.hp, f.maxHp, f.ammo, f.superReady);
+        if (this.builtMap && f.id === this.localId) {
+          const inB = inBushAt(this.builtMap.bushes, f.x, f.z);
+          if (inB !== v.faded) {
+            v.faded = inB;
+            v.rig.setFaded(inB);
+          }
+        }
+        this.drawBar(v, f.hp, f.maxHp, f.ammo, heroById(f.heroId).ammoMax, f.superReady);
         v.bar.visible = f.alive && !hidden;
       }
       this.syncBullets(this.remoteBullets);
@@ -1155,7 +1199,38 @@ export class GameManager {
     }
   }
 
-  /** Ghidaj țintire stil Brawl: cât ții stick-ul de foc, vezi raza + evantaiul. */
+  private spawnShock(x: number, z: number, color: number) {
+    let r = this.shockRings.find((s) => s.t >= 1);
+    if (!r) {
+      if (this.shockRings.length >= 5) return;
+      const mesh = new THREE.Mesh(
+        new THREE.RingGeometry(0.85, 1.1, 40),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false })
+      );
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.visible = false;
+      this.scene.add(mesh);
+      r = { mesh, t: 1 };
+      this.shockRings.push(r);
+    }
+    r.t = 0;
+    r.mesh.visible = true;
+    r.mesh.position.set(x, 0.15, z);
+    (r.mesh.material as THREE.MeshBasicMaterial).color.setHex(color);
+  }
+
+  private updateShocks(dt: number) {
+    for (const r of this.shockRings) {
+      if (r.t >= 1) {
+        r.mesh.visible = false;
+        continue;
+      }
+      r.t = Math.min(1, r.t + dt * 1.8);
+      const s = 1 + r.t * 9;
+      r.mesh.scale.set(s, s, s);
+      (r.mesh.material as THREE.MeshBasicMaterial).opacity = 0.8 * (1 - r.t);
+    }
+  }
   private updateAimGuide() {
     const st = this.controls.state;
     const active = st.aiming && this.state === 'battle' && !this.paused;
@@ -1219,24 +1294,36 @@ export class GameManager {
     });
     this.aimGroup.visible = true;
   }
-
-  private updateGas(r: number) {    // inel toxic: vizibil doar în showdown când gazul s-a strâns sub hartă
+  private updateGas(r: number) {
+    // zid de FOC care se strânge (nu inel toxic): cilindru + jar
     if (this.modeId !== 'showdown' || r <= 0) {
       if (this.gasRing) this.gasRing.visible = false;
       return;
     }
     if (!this.gasRing) {
-      const geo = new THREE.RingGeometry(0.96, 1.04, 64);
+      const geo = new THREE.CylinderGeometry(1, 1, 7, 48, 1, true);
       const mat = new THREE.MeshBasicMaterial({
-        color: 0xb8f135, transparent: true, opacity: 0.75, side: THREE.DoubleSide,
+        color: 0xff5a00, transparent: true, opacity: 0.4,
+        side: THREE.DoubleSide, depthWrite: false,
       });
       this.gasRing = new THREE.Mesh(geo, mat);
-      this.gasRing.rotation.x = -Math.PI / 2;
-      this.gasRing.position.y = 0.12;
+      this.gasRing.position.y = 3.2;
+      this.gasRing.frustumCulled = false;
       this.scene.add(this.gasRing);
     }
     this.gasRing.visible = true;
-    this.gasRing.scale.setScalar(Math.max(0.1, r));
+    this.gasRing.scale.set(Math.max(0.1, r), 1, Math.max(0.1, r));
+    const mat = this.gasRing.material as THREE.MeshBasicMaterial;
+    mat.opacity = 0.32 + Math.sin(this.clock * 5) * 0.1;
+    // jar pe circumferință
+    if (Math.random() < 0.6) {
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.max(0.1, r);
+      this.particles.spawn(
+        Math.cos(a) * rr, 0.5 + Math.random() * 3, Math.sin(a) * rr,
+        Math.random() < 0.5 ? 0xff5a00 : 0xffb020, 2, 2, 0.7
+      );
+    }
   }
 
   private updateCamera(_dt: number) {

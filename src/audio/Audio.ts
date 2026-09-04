@@ -3,7 +3,8 @@ import { settings } from '../settings/Settings';
 
 type SfxName =
   | 'ui' | 'shoot' | 'super' | 'hit' | 'ko' | 'hurt'
-  | 'coin' | 'win' | 'lose' | 'click' | 'spawn' | 'heal' | 'countdown';
+  | 'coin' | 'win' | 'lose' | 'click' | 'spawn' | 'heal' | 'countdown'
+  | 'crate' | 'powerup' | 'gas' | 'upgrade' | 'select' | 'denied' | 'ammo' | 'boom';
 
 class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -58,6 +59,14 @@ class AudioEngine {
       case 'spawn': this.tone(300, 0.25, 'sine', 0.2, 300); break;
       case 'heal': this.tone(500, 0.3, 'sine', 0.16, 250); break;
       case 'countdown': this.tone(440, 0.12, 'square', 0.18); break;
+      case 'crate': this.tone(180, 0.12, 'square', 0.2, -60); this.tone(120, 0.16, 'triangle', 0.2, -40, 0.06); break;
+      case 'powerup': [660, 880, 1320].forEach((f, i) => this.tone(f, 0.14, 'sine', 0.2, 0, i * 0.06)); break;
+      case 'gas': this.tone(140, 0.5, 'sawtooth', 0.12, -40); break;
+      case 'upgrade': [523, 659, 784].forEach((f, i) => this.tone(f, 0.16, 'square', 0.18, 0, i * 0.07)); break;
+      case 'select': this.tone(740, 0.1, 'triangle', 0.22, 220); break;
+      case 'denied': this.tone(220, 0.15, 'sawtooth', 0.16, -80); break;
+      case 'ammo': this.tone(980, 0.06, 'sine', 0.14, 200); break;
+      case 'boom': this.tone(90, 0.5, 'sawtooth', 0.26, -50); this.tone(55, 0.6, 'sine', 0.24, -20, 0.03); break;
       case 'win': [523, 659, 784, 1046].forEach((f, i) => this.tone(f, 0.22, 'triangle', 0.22, 0, i * 0.13)); break;
       case 'lose': [400, 340, 280, 200].forEach((f, i) => this.tone(f, 0.25, 'sawtooth', 0.15, -40, i * 0.15)); break;
     }

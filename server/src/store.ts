@@ -4,7 +4,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { MATCH_REWARDS, QUESTS, SHOP_ITEMS, XP_PER_LEVEL } from '../../src/data/economy.js';
-import { HEROES, POWER_MAX, UPGRADE_COST } from '../../src/data/heroes.js';
+import { GADGETS, HEROES, POWER_MAX, UPGRADE_COST } from '../../src/data/heroes.js';
 
 export interface Account {
   id: string;
@@ -27,6 +27,7 @@ export interface Account {
   questsClaimed: string[];
   heroPower: Record<string, number>;
   heroTrophies: Record<string, number>;
+  heroGadgets: Record<string, string>;
   friends: string[];
   incoming: string[];
   outgoing: string[];
@@ -48,6 +49,7 @@ export interface PublicProfile {
   questsClaimed: string[];
   heroPower: Record<string, number>;
   heroTrophies: Record<string, number>;
+  heroGadgets: Record<string, string>;
 }
 
 const DIR = process.env.DATA_DIR || join(process.cwd(), 'data');const FILE = join(DIR, 'accounts.json');
@@ -67,6 +69,7 @@ export function toPublic(a: Account): PublicProfile {
     questsClaimed: [...a.questsClaimed],
     heroPower: { ...a.heroPower },
     heroTrophies: { ...(a.heroTrophies ?? {}) },
+    heroGadgets: { ...(a.heroGadgets ?? {}) },
   };
 }
 
@@ -91,6 +94,7 @@ class Store {
         a.questsClaimed ??= [];
         a.heroPower ??= {};
         a.heroTrophies ??= {};
+        a.heroGadgets ??= {};
         a.friends ??= [];
         a.incoming ??= [];
         a.outgoing ??= [];
@@ -138,7 +142,7 @@ class Store {
       wins: 0, kills: 0, supers: 0, stars: 0,
       skins: [], equippedSkin: {}, questsClaimed: [],
       heroPower: {}, friends: [], incoming: [], outgoing: [],
-      heroTrophies: {},
+      heroTrophies: {}, heroGadgets: {},
       createdAt: Date.now(),
     };
     this.issueToken(a);
@@ -284,6 +288,21 @@ class Store {
     a.heroPower[heroId] = cur + 1;
     this.persist();
     return { ok: true, msg: `Putere ${cur + 1}!`, profile: toPublic(a) };
+  }
+
+  /** Cumpără gadget pentru un erou (preț fix per gadget). */
+  buyGadget(id: string, heroId: string, gadgetId: string): { ok: boolean; msg: string; profile?: PublicProfile } {
+    const a = this.accounts.get(id);
+    if (!a) return { ok: false, msg: 'Cont inexistent.' };
+    if (!HEROES.some((h) => h.id === heroId)) return { ok: false, msg: 'Erou inexistent.' };
+    const g = GADGETS.find((x) => x.id === gadgetId);
+    if (!g) return { ok: false, msg: 'Gadget inexistent.' };
+    if (a.heroGadgets[heroId] === gadgetId) return { ok: false, msg: 'Deja echipat.' };
+    if (a.coins < g.price) return { ok: false, msg: `Îți lipsesc ${g.price - a.coins} monezi.` };
+    a.coins -= g.price;
+    a.heroGadgets[heroId] = gadgetId;
+    this.persist();
+    return { ok: true, msg: `${g.name} echipat pe ${heroId.toUpperCase()}!`, profile: toPublic(a) };
   }
 
   accountById(id: string): Account | undefined {

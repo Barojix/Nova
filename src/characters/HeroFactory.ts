@@ -15,6 +15,8 @@ export interface HeroRig {
   playHit: () => void;
   playDeath: (cb: () => void) => void;
   setSuperReady: (ready: boolean) => void;
+  /** Erou în tufiș: translucid (te vezi, inamicii nu). */
+  setFaded: (faded: boolean) => void;
   update: (dt: number, moving: boolean, time: number) => void;
 }
 
@@ -29,85 +31,143 @@ export function buildHero(def: HeroDef, skinColor?: number): HeroRig {
   const group = new THREE.Group();
   const main = new THREE.Color(skinColor ?? def.color);
   const accent = new THREE.Color(def.accent);
+  const lam = (c: THREE.Color | number) => new THREE.MeshLambertMaterial({ color: c });
 
-  // variantă vizuală per erou (0/1/2 din hash id): talie + accesorii cască
-  let hv = 0;
-  for (const ch of def.id) hv = (hv * 31 + ch.charCodeAt(0)) % 3;
-  const bodyMat = new THREE.MeshLambertMaterial({ color: main });
-  const body = new THREE.Mesh(bodyGeo, bodyMat);
-  if (hv === 0) body.scale.set(1.18, 0.92, 1.18);       // masiv
-  else if (hv === 1) body.scale.set(0.9, 1.16, 0.9);    // înalt
-  else body.scale.set(0.85, 0.85, 0.85);                // compact
-  body.position.y = 0.85;
-  group.add(body);
-
-  // curea / detaliu accent
-  const belt = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.62, 0.62, 0.18, 10),
-    new THREE.MeshLambertMaterial({ color: accent })
-  );
-  belt.position.y = 0.55;
-  group.add(belt);
-
-  const head = new THREE.Mesh(headGeo, new THREE.MeshLambertMaterial({ color: 0xffe3c2 }));
-  head.position.y = 1.75;
-  group.add(head);
-
-  // cască în culoarea eroului (siluetă recognoscibilă)
-  const helm = new THREE.Mesh(
-    new THREE.SphereGeometry(0.5, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55),
-    new THREE.MeshLambertMaterial({ color: main })
-  );
-  helm.position.y = 1.82;
-  group.add(helm);
-  // accesorii cască per variantă (siluete diferite)
-  const helmMat = new THREE.MeshLambertMaterial({ color: main });
-  if (hv === 0) {
-    // coarne
-    for (const side of [-1, 1]) {
-      const horn = new THREE.Mesh(
-        new THREE.ConeGeometry(0.12, 0.42, 6),
-        new THREE.MeshLambertMaterial({ color: accent })
-      );
-      horn.position.set(side * 0.42, 2.1, 0);
-      horn.rotation.z = -side * 0.7;
-      group.add(horn);
-    }
-  } else if (hv === 1) {
-    // antenă
-    const rod = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.04, 0.04, 0.5, 6),
-      helmMat
+  // specii: uman / robot / animal / monstru — siluete complet diferite
+  const species = def.species;
+  const bodyMat = lam(main);
+  let body: THREE.Mesh;
+  let head: THREE.Mesh;
+  let bodyBaseY = 0.85;
+  let headBaseY = 1.75;
+  if (species === 'robot') {
+    body = new THREE.Mesh(new THREE.BoxGeometry(0.95, 1.05, 0.7), bodyMat);
+    body.position.y = 0.9;
+    bodyBaseY = 0.9;
+    group.add(body);
+    // piept luminos
+    const core = new THREE.Mesh(
+      new THREE.BoxGeometry(0.4, 0.3, 0.1),
+      new THREE.MeshBasicMaterial({ color: accent })
     );
-    rod.position.set(0, 2.3, 0);
+    core.position.set(0, 1.0, 0.36);
+    group.add(core);
+    // cap cutie + vizor
+    head = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.6, 0.66), lam(0x2a2f45));
+    head.position.y = 1.78;
+    headBaseY = 1.78;
+    group.add(head);
+    const visor = new THREE.Mesh(
+      new THREE.BoxGeometry(0.56, 0.16, 0.1),
+      new THREE.MeshBasicMaterial({ color: accent })
+    );
+    visor.position.set(0, 1.8, 0.34);
+    group.add(visor);
+    // antenă
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.5, 6), lam(main));
+    rod.position.set(0.25, 2.3, 0);
     group.add(rod);
     const bulb = new THREE.Mesh(
       new THREE.SphereGeometry(0.11, 8, 6),
       new THREE.MeshBasicMaterial({ color: accent })
     );
-    bulb.position.set(0, 2.58, 0);
+    bulb.position.set(0.25, 2.58, 0);
     group.add(bulb);
+    // picioare cutie
+    for (const side of [-1, 1]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.45, 0.35), lam(0x2a2f45));
+      leg.position.set(side * 0.25, 0.22, 0);
+      group.add(leg);
+    }
+  } else if (species === 'animal') {
+    body = new THREE.Mesh(new THREE.SphereGeometry(0.68, 12, 10), bodyMat);
+    body.scale.set(1.0, 0.82, 1.25);
+    body.position.y = 0.72;
+    bodyBaseY = 0.72;
+    group.add(body);
+    // cap în față-sus + urechi + coadă
+    head = new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 10), lam(0xffe3c2));
+    head.position.set(0, 1.35, 0.45);
+    headBaseY = 1.35;
+    group.add(head);
+    for (const side of [-1, 1]) {
+      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.4, 6), lam(main));
+      ear.position.set(side * 0.24, 1.72, 0.4);
+      group.add(ear);
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, 0.5, 6), lam(main));
+      leg.position.set(side * 0.35, 0.25, side * 0.2);
+      group.add(leg);
+    }
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.6, 6), lam(accent));
+    tail.position.set(0, 0.8, -0.85);
+    tail.rotation.x = -1.1;
+    group.add(tail);
+  } else if (species === 'monstru') {
+    body = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.85, 1.35, 9), bodyMat);
+    body.position.y = 0.85;
+    group.add(body);
+    // umeri țepoși
+    for (const side of [-1, 1]) {
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.5, 6), lam(accent));
+      spike.position.set(side * 0.62, 1.35, 0);
+      spike.rotation.z = -side * 0.9;
+      group.add(spike);
+    }
+    head = new THREE.Mesh(new THREE.SphereGeometry(0.44, 10, 8), lam(0xffe3c2));
+    head.position.y = 1.78;
+    headBaseY = 1.78;
+    group.add(head);
+    // coarne mari
+    for (const side of [-1, 1]) {
+      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.55, 6), lam(accent));
+      horn.position.set(side * 0.4, 2.15, 0);
+      horn.rotation.z = -side * 0.55;
+      group.add(horn);
+    }
   } else {
-    // creastă
-    const crest = new THREE.Mesh(
-      new THREE.BoxGeometry(0.12, 0.34, 0.55),
-      new THREE.MeshLambertMaterial({ color: accent })
+    // uman: corp + curea + cască
+    body = new THREE.Mesh(bodyGeo, bodyMat);
+    body.position.y = 0.85;
+    group.add(body);
+    const belt = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.62, 0.62, 0.18, 10),
+      lam(accent)
     );
-    crest.position.set(0, 2.24, -0.05);
-    group.add(crest);
+    belt.position.y = 0.55;
+    group.add(belt);
+    head = new THREE.Mesh(headGeo, lam(0xffe3c2));
+    head.position.y = 1.75;
+    group.add(head);
+  }
+  // cască în culoarea eroului (uman + monstru)
+  let helm: THREE.Mesh | null = null;
+  if (species === 'uman' || species === 'monstru') {
+    helm = new THREE.Mesh(
+      new THREE.SphereGeometry(0.5, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55),
+      lam(main)
+    );
+    helm.position.y = headBaseY + 0.07;
+    group.add(helm);
   }
 
-  // ochi
+  // ochi (uman/monstru; robotul are vizor, animalul ochi mari)
   const eyeMat = new THREE.MeshBasicMaterial({ color: 0x141828 });
-  const eL = new THREE.Mesh(eyeGeo, eyeMat);
-  eL.position.set(-0.16, 1.78, 0.4);
-  const eR = new THREE.Mesh(eyeGeo, eyeMat);
-  eR.position.set(0.16, 1.78, 0.4);
-  group.add(eL, eR);
+  if (species !== 'robot') {
+    const big = species === 'animal';
+    const eyeGeoUse = big ? new THREE.SphereGeometry(0.13, 8, 6) : eyeGeo;
+    const ey = species === 'animal' ? headBaseY + 0.05 : headBaseY + 0.03;
+    const ez = species === 'animal' ? 0.82 : 0.4;
+    const ex = big ? 0.18 : 0.16;
+    const eL = new THREE.Mesh(eyeGeoUse, eyeMat);
+    eL.position.set(-ex, ey, ez);
+    const eR = new THREE.Mesh(eyeGeoUse, eyeMat);
+    eR.position.set(ex, ey, ez);
+    group.add(eL, eR);
+  }
 
   // armă (mărime după rază: lunetiștii au țeavă lungă)
   const gunScale = 0.8 + Math.min(1.4, def.range / 10);
-  const gun = new THREE.Mesh(gunGeo, new THREE.MeshLambertMaterial({ color: 0x2a2f45 }));
+  const gun = new THREE.Mesh(gunGeo, lam(0x2a2f45));
   gun.scale.set(1, gunScale, 1);
   gun.position.set(0.55, 1.0, 0.35);
   gun.rotation.x = Math.PI / 2 - 0.15;
@@ -118,6 +178,23 @@ export function buildHero(def: HeroDef, skinColor?: number): HeroRig {
   );
   tip.position.set(0.55, 1.08, 0.9);
   group.add(tip);
+
+  // mărime per erou (tancuri mari, asasini mici)
+  group.scale.setScalar(def.sizeMul ?? 1);
+
+  // materiale pentru fade în tufiș
+  const fadeMats: { m: THREE.Material; o: number; t: boolean }[] = [];
+  group.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    const mt = mesh.material as THREE.Material | undefined;
+    if (mt && 'opacity' in mt) {
+      fadeMats.push({
+        m: mt,
+        o: (mt as THREE.MeshBasicMaterial).opacity ?? 1,
+        t: !!(mt as THREE.MeshBasicMaterial).transparent,
+      });
+    }
+  });
 
   // inel echipă
   const ring = new THREE.Mesh(
@@ -155,6 +232,13 @@ export function buildHero(def: HeroDef, skinColor?: number): HeroRig {
       superR = ready;
       (ring.material as THREE.MeshBasicMaterial).color.setHex(ready ? 0xff9f1c : teamHex);
     },
+    setFaded(faded: boolean) {
+      for (const e of fadeMats) {
+        const mt = e.m as THREE.MeshBasicMaterial;
+        mt.transparent = faded ? true : e.t;
+        mt.opacity = faded ? e.o * 0.4 : e.o;
+      }
+    },
     playAttack() { attackT = 0.22; },
     playHit() { hitT = 0.18; },
     playDeath(cb: () => void) { deadT = 0.55; deathCb = cb; },
@@ -174,9 +258,9 @@ export function buildHero(def: HeroDef, skinColor?: number): HeroRig {
       }
       // idle bob + alergare + aplecare la mișcare
       const bob = moving ? Math.sin(time * 11) * 0.09 : Math.sin(time * 2.4) * 0.045;
-      body.position.y = 0.85 + bob;
-      head.position.y = 1.75 + bob * 1.2;
-      helm.position.y = 1.82 + bob * 1.2;
+      body.position.y = bodyBaseY + bob;
+      head.position.y = headBaseY + bob * 1.2;
+      if (helm) helm.position.y = headBaseY + 0.07 + bob * 1.2;
       group.rotation.x = moving ? 0.12 : 0; // aplecare înainte la fugă
       // puls auriu pe inel când super-ul e gata
       if (superR) {

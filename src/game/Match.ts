@@ -21,11 +21,13 @@ export interface SimFighter {
   x: number; z: number;
   facing: number;
   hp: number;
+  maxHp: number;
   alive: boolean;
   respawnT: number;
   reloadT: number;
-  ammo: number;       // gloanțe curente (max 3, ca în hero brawlere)
+  ammo: number;       // gloanțe curente (max = def.ammoMax, divers per erou)
   ammoT: number;      // timer regenerare 1 glonț
+  gadget?: string;    // gadget pasiv echipat
   superCharge: number;
   superReady: boolean;
   supersUsed: number;
@@ -51,6 +53,7 @@ export interface SimBullet {
   color: number;
   big: boolean;      // proiectil mare (lob/wave/mortar) — rază + vizual
   pierce: boolean;   // străpunge (lovește mai mulți)
+  arcing: boolean;   // bombă pe sus — trece peste ziduri
   hitIds?: number[]; // deja loviți (doar pierce)
 }
 
@@ -78,6 +81,7 @@ export interface PlayerSpec {
   isBot: boolean;
   isLocal?: boolean;
   power?: number; // nivel putere 1-11 (scalare stat-uri)
+  gadget?: string; // id gadget pasiv echipat
 }
 
 const WALL_PAD = 0.7;
@@ -155,15 +159,22 @@ export class Match {
     }));
     void half;
     specs.forEach((s, i) => {
-      const def = scaleHeroDef(heroById(s.heroId), s.power ?? 1);
+      let def = scaleHeroDef(heroById(s.heroId), s.power ?? 1);
+      // gadgeturi pasive (aplicate la naștere)
+      if (s.gadget === 'sprint') def = { ...def, speed: def.speed * 1.1 };
+      if (s.gadget === 'furie') {
+        def = { ...def, superCooldownHits: Math.max(3, def.superCooldownHits - 2) };
+      }
+      const maxHp = def.hp + (s.gadget === 'scut' ? 800 : 0);
       const sp = this.spawnPoint(s.team, i);
       this.fighters.push({
         id: uid(),
         name: s.name, heroId: s.heroId, def,
         team: s.team, isBot: s.isBot, isLocal: !!s.isLocal,
         x: sp.x, z: sp.z, facing: 0,
-        hp: def.hp, alive: true, respawnT: 0, reloadT: 0,
-        ammo: 3, ammoT: 0,
+        hp: maxHp, maxHp, alive: true, respawnT: 0, reloadT: 0,
+        ammo: def.ammoMax, ammoT: 0,
+        gadget: s.gadget,
         superCharge: 0, superReady: false, supersUsed: 0,
         kills: 0, deaths: 0, stars: 0,
         power: Math.max(1, Math.min(11, Math.round(s.power ?? 1))),
@@ -229,15 +240,16 @@ export class Match {
         if (f.respawnT <= 0 && this.modeId !== 'showdown') {
           const sp = this.spawnPoint(f.team, f.id);
           f.x = sp.x; f.z = sp.z;
-          f.hp = f.def.hp;
+          f.hp = f.maxHp;
+          f.ammo = f.def.ammoMax; f.ammoT = 0;
           f.alive = true;
           this.events.push({ type: 'spawn', id: f.id });
         }
         continue;
       }
       f.reloadT -= dt;
-      // regenerare ammo: 1 glonț per ciclu de reload (max 3)
-      if (f.ammo < 3) {
+      // regenerare ammo: 1 glonț per ciclu (max = specific eroului)
+      if (f.ammo < f.def.ammoMax) {
         f.ammoT += dt;
         if (f.ammoT >= f.def.reloadMs / 1000) {
           f.ammoT = 0;
@@ -249,15 +261,18 @@ export class Match {
         const l = Math.hypot(inp.mx, inp.mz);
         const wantFire = inp.attack && f.reloadT <= 0 && f.ammo > 0;
         const wantSuper = inp.super && f.superReady;
+        const aimL = Math.hypot(inp.ax, inp.az);
         if (l > 0.12) {
           const sp = f.def.speed * Math.min(1, l);
           const p = collide(this.walls, half, f.x + inp.mx * sp * dt, f.z + inp.mz * sp * dt, WALL_PAD);
           f.x = p.x; f.z = p.z;
-          // eroul se uită unde MERGE (nu după aim)
-          f.facing = Math.atan2(inp.mx, inp.mz);
-        } else if ((wantFire || wantSuper) && Math.hypot(inp.ax, inp.az) > 0.15) {
-          // doar în momentul focului se orientează spre țintă
+        }
+        if ((wantFire || wantSuper) && aimL > 0.15) {
+          // la foc, aim-ul câștigă (strafe ca în Brawl), nu direcția de mers
           f.facing = Math.atan2(inp.ax, inp.az);
+        } else if (l > 0.12) {
+          // altfel eroul se uită unde merge
+          f.facing = Math.atan2(inp.mx, inp.mz);
         }
         if (wantFire) this.fire(f, false);
         if (wantSuper) this.fire(f, true);
@@ -272,7 +287,8 @@ export class Match {
       b.z += b.dz * step;
       b.dist += step;
       let dead = b.dist >= b.maxDist || Math.abs(b.x) > half + 1 || Math.abs(b.z) > half + 1;
-      if (!dead && pointInWalls(this.walls, b.x, b.z)) {
+      // bombele arcuite trec peste ziduri, restul se sparg de ele
+      if (!dead && !b.arcing && pointInWalls(this.walls, b.x, b.z)) {
         this.events.push({ type: 'hit', id: b.ownerId, x: b.x, z: b.z, damage: 0 });
         dead = true;
       }
@@ -454,7 +470,7 @@ export class Match {
           dx: dx * c - dz * s, dz: dx * s + dz * c,
           speed: 16, dist: 0, maxDist: f.def.superRange,
           damage: Math.round(f.def.superDamage * powMul), team: f.team, ownerId: f.id,
-          isSuper: true, color: 0xff9f1c, big: n === 1, pierce: false,
+          isSuper: true, color: 0xff9f1c, big: n === 1, pierce: false, arcing: false,
         });
       }
       f.reloadT = 0.4;
@@ -470,6 +486,7 @@ export class Match {
       const gap = kind === 'spread' ? 0.22 : 0.14;
       const big = kind === 'lob' || kind === 'wave' || kind === 'mortar';
       const pierce = kind === 'pierce';
+      const arcing = kind === 'lob' || kind === 'mortar'; // bomba pe sus, peste ziduri
       for (let i = 0; i < n; i++) {
         const spread = n > 1 ? (i - (n - 1) / 2) * gap : 0;
         const c = Math.cos(spread), s = Math.sin(spread);
@@ -479,11 +496,12 @@ export class Match {
           dx: dx * c - dz * s, dz: dx * s + dz * c,
           speed, dist: 0, maxDist: f.def.range,
           damage: Math.round(f.def.damage * powMul), team: f.team, ownerId: f.id,
-          isSuper: false, color: f.def.accent, big, pierce,
+          isSuper: false, color: f.def.accent, big, pierce, arcing,
           hitIds: pierce ? [] : undefined,
         });
       }
-      f.reloadT = f.def.reloadMs / 1000;
+      // spam permis cât ai gloanțe: pauză scurtă între focuri
+      f.reloadT = Math.min(0.32, (f.def.reloadMs / 1000) * 0.5);
       this.events.push({ type: 'shoot', id: f.id, x: f.x, z: f.z, super: false });
     }
   }
@@ -500,6 +518,10 @@ export class Match {
     if (owner && owner.id !== f.id && amount > 0) {
       owner.superCharge++;
       if (owner.superCharge >= owner.def.superCooldownHits) owner.superReady = true;
+      // vampir: 12% din damage revine ca viață
+      if (owner.gadget === 'vampir' && owner.alive) {
+        owner.hp = Math.min(owner.maxHp, owner.hp + amount * 0.12);
+      }
     }
     // knockback ușor
     const p = collide(this.walls, this.map.size / 2, f.x + kx * 0.35, f.z + kz * 0.35, WALL_PAD);
@@ -525,7 +547,7 @@ export class Match {
       this.events.push({ type: 'ko', id: f.id, killer: killerId, x: f.x, z: f.z });
       // respawn dummies training cu HP plin
       if (f.aiMode === 'dummy') {
-        f.hp = f.def.hp;
+        f.hp = f.maxHp;
       }
       return true;
     }
