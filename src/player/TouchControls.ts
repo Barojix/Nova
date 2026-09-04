@@ -62,7 +62,12 @@ export class TouchControls {
       const t = e.target as HTMLElement;
       if (t.closest('.tc-stick')) return; // stick-urile își gestionează singure atingerea
       if (e.clientX > window.innerWidth * 0.45) return; // dreapta = zona de atac
-      if (this.moveId !== null) return;
+      if (this.moveId !== null) {
+        // pointer blocat anterior (up pierdut în afara ecranului): îl furăm,
+        // altfel joystick-ul n-ar mai apărea niciodată
+        if (e.pointerId === this.moveId) return;
+        this.resetMove();
+      }
       this.moveId = e.pointerId;
       this.moveOx = e.clientX; this.moveOy = e.clientY;
       this.place(this.moveBase!, e.clientX, e.clientY);
@@ -150,6 +155,31 @@ export class TouchControls {
       knob.style.transform = 'translate(0,0)';
       this.state.aiming = false;
     });
+  }
+
+  /** Reset total (la ieșirea din meci): niciun deget blocat nu rămâne. */
+  reset() {
+    this.moveId = null;
+    this.resetMove();
+    this.state.aiming = false;
+    this.state.attackPressed = false;
+    this.state.superPressed = false;
+    this.aimedShot = false;
+    this.aimedSuper = false;
+    for (const [base, knob] of [
+      [this.atkBase, this.atkKnob],
+      [this.supBase, this.supKnob],
+    ] as const) {
+      base?.classList.remove('held');
+      if (knob) knob.style.transform = 'translate(0,0)';
+    }
+  }
+
+  private resetMove() {
+    this.moveId = null;
+    this.state.mx = 0; this.state.mz = 0;
+    if (this.moveKnob) this.moveKnob.style.transform = 'translate(0,0)';
+    this.moveBase?.classList.remove('anchored');
   }
 
   private place(el: HTMLElement, x: number, y: number) {

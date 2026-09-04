@@ -5,8 +5,11 @@ import { settings } from '../settings/Settings';
 // Toate particulele sunt mesh-uri pre-alocate; spawn() reciclează cele invizibile.
 export class Particles {
   private group = new THREE.Group();
+  /** Grupul persistent din scenă (menținut la curățarea meciurilor). */
+  readonly node: THREE.Group;
 
   constructor(scene: THREE.Scene, budget = 220) {
+    this.node = this.group;
     const geo = new THREE.SphereGeometry(0.12, 6, 5);
     for (let i = 0; i < budget; i++) {
       const m = new THREE.Mesh(

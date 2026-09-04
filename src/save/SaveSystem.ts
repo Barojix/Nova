@@ -6,6 +6,7 @@ export interface SaveData {
   trophies: number;
   selectedHero: string;
   unlockedHeroes: string[];
+  heroPower: Record<string, number>; // heroId -> nivel putere 1-11
   skins: string[];        // item ids deținute
   equippedSkin: Record<string, string>; // heroId -> itemId
   quests: Record<string, number>; // questId -> progres
@@ -26,7 +27,8 @@ const DEFAULTS: SaveData = {
   level: 1,
   trophies: 0,
   selectedHero: 'volt',
-  unlockedHeroes: ['volt', 'moss', 'blip'],
+  unlockedHeroes: [...HERO_IDS],
+  heroPower: {},
   skins: [],
   equippedSkin: {},
   quests: {},
@@ -38,8 +40,10 @@ const DEFAULTS: SaveData = {
   lastDaily: '',
 };
 
+import { HERO_IDS } from '../data/heroes';
+
 export class SaveSystem {
-  data: SaveData = { ...DEFAULTS };
+  data: SaveData = { ...DEFAULTS, unlockedHeroes: [...HERO_IDS] };
   constructor() {
     this.load();
   }
@@ -47,6 +51,11 @@ export class SaveSystem {
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) this.data = { ...DEFAULTS, ...JSON.parse(raw) };
+      // toți eroii deblocați + migrare putere
+      for (const id of HERO_IDS) {
+        if (!this.data.unlockedHeroes.includes(id)) this.data.unlockedHeroes.push(id);
+      }
+      this.data.heroPower ??= {};
     } catch { /* corupt -> default */ }
   }
   save() {

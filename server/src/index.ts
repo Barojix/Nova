@@ -4,8 +4,9 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { Match, type SimFighter, type SimInput } from '../../src/game/Match.js';
 import { canSee } from '../../src/game/visibility.js';
-import { mapById } from '../../src/data/maps.js';
-import { heroById } from '../../src/data/heroes.js';
+import { mapById, mapForMode } from '../../src/data/maps.js';
+import { heroById, isHeroId, scaleHeroDef, HERO_IDS } from '../../src/data/heroes.js';
+import { MODES } from '../../src/data/modes.js';
 import { uid } from '../../src/utils/math.js';
 import { MATCH_REWARDS } from '../../src/data/economy.js';
 import { store, toPublic } from './store.js';
@@ -39,17 +40,118 @@ interface Room {
   createdAt: number;
   endedAt: number;
   snapT: number;
+  /** cameră custom: fără umplere cu boți, membrii pre-definiți din lobby */
+  custom?: { hostId: string; members: Map<string, number> };
+}
+
+/** Lobby custom (înainte de start): cod -> setări + jucători. */
+interface Lobby {
+  code: string;
+  modeId: string;
+  mapId: string;
+  hostId: string;
+  players: Map<string, { ws: WebSocket; name: string; hero: string }>;
 }
 
 const rooms = new Map<string, Room>();
+const lobbies = new Map<string, Lobby>();
+/** prezență: accountId -> socket-uri deschise (lobby + meciuri) */
+const accountSockets = new Map<string, Set<WebSocket>>();
+/** socket lobby -> accountId */
+const lobbyByWs = new Map<WebSocket, string>();
 const authHits = new Map<string, number[]>();
 let roomSeq = 1;
 
 const BOT_NAMES = ['Rook', 'Zed', 'Pip', 'Kira', 'Jax', 'Luma', 'Onyx', 'Fizz'];
-const BOT_HEROES = ['volt', 'moss', 'blip'];
 
 function roomSize(modeId: string): number {
-  return modeId === 'showdown' ? 10 : 6;
+  if (modeId === 'showdown') return 10;
+  if (modeId === 'training') return 4;
+  return 6;
+}
+
+const VALID_MODES = new Set(MODES.map((m) => m.id));
+
+function onlineIds(): Set<string> {
+  return new Set(accountSockets.keys());
+}
+
+function trackSocket(accountId: string | undefined, ws: WebSocket) {
+  if (!accountId) return;
+  let set = accountSockets.get(accountId);
+  if (!set) {
+    set = new Set();
+    accountSockets.set(accountId, set);
+  }
+  set.add(ws);
+}
+
+function untrackSocket(ws: WebSocket) {
+  for (const [id, set] of accountSockets) {
+    if (set.delete(ws) && set.size === 0) accountSockets.delete(id);
+  }
+  lobbyByWs.delete(ws);
+}
+
+function sendToAccount(accountId: string, msg: unknown) {
+  const set = accountSockets.get(accountId);
+  if (!set) return false;
+  let ok = false;
+  for (const ws of set) {
+    if (ws.readyState === 1) {
+      send(ws, msg as never);
+      ok = true;
+    }
+  }
+  return ok;
+}
+
+function lobbyState(l: Lobby): Extract<import('../../src/networking/protocol.js').ServerMsg, { t: 'room-state' }> {
+  return {
+    t: 'room-state',
+    room: {
+      code: l.code,
+      mode: l.modeId,
+      map: l.mapId,
+      mapName: mapById(l.mapId).name,
+      host: false, // completat per-destinatar
+      players: [...l.players.values()].map((p) => ({ name: p.name, hero: p.hero, host: false })),
+      started: false,
+    },
+  };
+}
+
+function broadcastLobby(l: Lobby) {
+  for (const [id, p] of l.players) {
+    const st = lobbyState(l);
+    if (st.room) {
+      st.room.host = id === l.hostId;
+      st.room.players = [...l.players.entries()].map(([pid, pl]) => ({
+        name: pl.name, hero: pl.hero, host: pid === l.hostId,
+      }));
+    }
+    if (p.ws.readyState === 1) send(p.ws, st as never);
+  }
+}
+
+function leaveLobby(ws: WebSocket) {
+  for (const [code, l] of lobbies) {
+    for (const [id, p] of l.players) {
+      if (p.ws === ws) {
+        l.players.delete(id);
+        if (l.players.size === 0) {
+          lobbies.delete(code);
+          console.log(`[lobby] ${code} închis (gol)`);
+        } else {
+          if (l.hostId === id) {
+            l.hostId = [...l.players.keys()][0];
+          }
+          broadcastLobby(l);
+        }
+        return;
+      }
+    }
+  }
 }
 
 // AI server-side minimal (fără Three.js): apropiere + trage în range + strânge stele.
@@ -71,7 +173,7 @@ function serverBot(m: Match, f: SimFighter, dt: number): SimInput {
   }
   let gx: number | null = null;
   let gz: number | null = null;
-  if (m.modeId === 'starrush' && f.stars < 6 && m.stars.length > 0) {
+  if ((m.modeId === 'starrush' || m.modeId === 'gemgrab') && f.stars < 6 && m.stars.length > 0) {
     let bd = 10;
     for (const s of m.stars) {
       const d = Math.hypot(s.x - f.x, s.z - f.z);
@@ -79,6 +181,19 @@ function serverBot(m: Match, f: SimFighter, dt: number): SimInput {
         bd = d;
         gx = s.x;
         gz = s.z;
+      }
+    }
+  }
+  if (m.modeId === 'heist' && (!target || best > f.def.range)) {
+    const foe = m.safes.find((s) => s.team !== f.team && s.hp > 0);
+    if (foe) {
+      gx = foe.x + (f.team === 0 ? 3 : -3);
+      gz = foe.z;
+      const d = Math.hypot(foe.x - f.x, foe.z - f.z);
+      if (d < f.def.range) {
+        out.ax = (foe.x - f.x) / (d || 1);
+        out.az = (foe.z - f.z) / (d || 1);
+        out.attack = Math.random() < 0.8;
       }
     }
   }
@@ -161,8 +276,12 @@ function snapOf(room: Room): Extract<ServerMsg, { t: 'snap' }> {
       alive: f.alive, team: f.team, heroId: f.heroId, name: f.name,
       kills: f.kills, stars: f.stars, superReady: f.superReady,
     })),
-    bullets: m.bullets.map((b) => ({ x: b.x, z: b.z, dx: b.dx, dz: b.dz, super: b.isSuper, color: b.color })),
+    bullets: m.bullets.map((b) => ({ x: b.x, z: b.z, dx: b.dx, dz: b.dz, super: b.isSuper, color: b.color, big: b.big })),
     stars: m.stars.map((s) => ({ id: s.id, x: s.x, z: s.z })),
+    cubes: m.cubes.map((s) => ({ id: s.id, x: s.x, z: s.z })),
+    crates: m.crates.map((s) => ({ id: s.id, x: s.x, z: s.z })),
+    safes: m.safes.map((s) => ({ team: s.team, hp: Math.max(0, Math.round(s.hp)), maxHp: s.maxHp, x: s.x, z: s.z })),
+    gas: m.gasR,
     scoreA: m.scoreA, scoreB: m.scoreB,
     time: m.time, over: m.over, winner: m.winner,
   };
@@ -174,9 +293,10 @@ function findOrCreateRoom(modeId: string, code?: string): Room {
     if (r && !r.match.over && r.players.length < roomSize(r.modeId)) return r;
   }
   for (const r of rooms.values()) {
+    if (r.custom) continue; // custom nu primește străini din quick-match
     if (r.modeId === modeId && !r.match.over && r.players.length < roomSize(modeId)) return r;
   }
-  const map = mapById(modeId === 'training' ? 'dune-rush' : 'crystal-hollow');
+  const map = mapById(mapForMode(modeId));
   const room: Room = {
     code: `R${roomSeq++}${Math.floor(Math.random() * 90 + 10)}`,
     modeId,
@@ -225,35 +345,65 @@ wss.on('connection', (ws: WebSocket, req) => {
       return;
     }
     if (msg.t === 'hello') {
-      const modeId = ['knockout', 'starrush', 'showdown'].includes(msg.modeId) ? msg.modeId : 'knockout';
+      const modeId = VALID_MODES.has(msg.modeId) ? msg.modeId : 'knockout';
       room = findOrCreateRoom(modeId, msg.room);
       const m = room.match;
-      const heroId = ['volt', 'moss', 'blip'].includes(msg.heroId) ? msg.heroId : 'volt';
-      // cont autentificat? numele și economia vin de la server, nu de la client.
       const account = msg.token ? store.refresh(msg.token) : null;
-      if (account) connToken = account.token;
+      if (account) {
+        connToken = account.token;
+        trackSocket(account.id, ws);
+      }
+      // cameră custom pornită: membrul se atașează la luptătorul rezervat
+      if (room.custom && account) {
+        const fid = room.custom.members.get(account.id);
+        const f = m.fighters.find((x) => x.id === fid);
+        if (!f) {
+          send(ws, { t: 'error', msg: 'Camera a pornit fără tine. Creează alta.' });
+          return;
+        }
+        player = {
+          ws, fighterId: f.id, name: f.name,
+          accountId: account.id,
+          input: { mx: 0, mz: 0, ax: 1, az: 0, attack: false, super: false },
+          lastInputAt: Date.now(), lastAttackAt: 0,
+        };
+        room.players.push(player);
+        trackSocket(account.id, ws);
+        send(ws, {
+          t: 'welcome', id: f.id, room: room.code, online: true,
+          profile: toPublic(account),
+        });
+        console.log(`[join-custom] ${f.name} -> ${room.code}`);
+        return;
+      }
+      const heroId = isHeroId(msg.heroId) ? msg.heroId : 'volt';
+      const power = account
+        ? Math.max(1, Math.min(11, Math.round(account.heroPower[heroId] ?? 1)))
+        : 1;
       const name = account ? account.name : String(msg.name ?? 'Erou').slice(0, 14) || 'Erou';
       const team = teamFor(room);
       // spawn simplu pe jumătatea echipei
       const sp = team === 0 ? { x: -13, z: 0 } : { x: 13, z: 0 };
-      const def = heroById(heroId);
+      const def = scaleHeroDef(heroById(heroId), power);
       const f: SimFighter = {
         id: uid(), name, heroId, def, team,
         isBot: false, isLocal: false,
         x: sp.x + (Math.random() - 0.5) * 2, z: sp.z + (Math.random() - 0.5) * 4,
         facing: 0, hp: def.hp, alive: true, respawnT: 0, reloadT: 0,
         superCharge: 0, superReady: false, supersUsed: 0, kills: 0, deaths: 0, stars: 0,
+        power, powerups: 0,
         aiT: 0, aiTx: 0, aiTz: 0, aiMode: 'fight',
       };
       m.fighters.push(f);
-      // completează cu boți până la dimensiunea camerei
+      // completează cu boți până la dimensiunea camerei (nu la custom)
       const want = roomSize(room.modeId);
+      if (!room.custom) {
       const botsNow = m.fighters.filter((x) => x.isBot).length;
       const humans = m.fighters.filter((x) => !x.isBot).length;
       for (let i = humans + botsNow; i < want; i++) {
         const bt = room.modeId === 'showdown' ? i : teamFor(room);
-        const bh = BOT_HEROES[i % BOT_HEROES.length];
-        const bdef = heroById(bh);
+        const bh = HERO_IDS[i % HERO_IDS.length];
+        const bdef = scaleHeroDef(heroById(bh), 1 + (i % 3));
         const a = (i / want) * Math.PI * 2;
         const bsp = room.modeId === 'showdown'
           ? { x: Math.cos(a) * 12, z: Math.sin(a) * 12 }
@@ -263,8 +413,10 @@ wss.on('connection', (ws: WebSocket, req) => {
           isBot: true, isLocal: false,
           x: bsp.x, z: bsp.z, facing: 0, hp: bdef.hp, alive: true,
           respawnT: 0, reloadT: 0, superCharge: 0, superReady: false, supersUsed: 0,
-          kills: 0, deaths: 0, stars: 0, aiT: 0, aiTx: 0, aiTz: 0, aiMode: 'fight',
+          kills: 0, deaths: 0, stars: 0, power: 1, powerups: 0,
+          aiT: 0, aiTx: 0, aiTz: 0, aiMode: 'fight',
         });
+      }
       }
       player = {
         ws, fighterId: f.id, name,
@@ -331,6 +483,221 @@ wss.on('connection', (ws: WebSocket, req) => {
       send(ws, { t: 'shop-result', ok: r.ok, msg: r.msg, profile: r.profile });
       return;
     }
+    if (msg.t === 'hero-upgrade') {
+      if (!authAllowed()) {
+        send(ws, { t: 'shop-result', ok: false, msg: 'Prea multe cereri. Așteaptă.' });
+        return;
+      }
+      const a = store.refresh(msg.token);
+      if (!a) {
+        send(ws, { t: 'shop-result', ok: false, msg: 'Sesiune expirată. Conectează-te din nou.' });
+        return;
+      }
+      const r = store.upgradeHero(a.id, msg.hero);
+      send(ws, { t: 'shop-result', ok: r.ok, msg: r.msg, profile: r.profile });
+      return;
+    }
+    if (msg.t === 'lobby-hello') {
+      const a = store.refresh(msg.token);
+      if (!a) {
+        send(ws, { t: 'error', msg: 'Sesiune expirată. Conectează-te din nou.' });
+        return;
+      }
+      connToken = a.token;
+      lobbyByWs.set(ws, a.id);
+      trackSocket(a.id, ws);
+      send(ws, { t: 'lobby-ok' });
+      send(ws, {
+        t: 'friend-state',
+        ...store.friendState(a.id, onlineIds()),
+      });
+      return;
+    }
+    if (
+      msg.t === 'friend-add' || msg.t === 'friend-accept' ||
+      msg.t === 'friend-decline' || msg.t === 'friend-remove' ||
+      msg.t === 'friend-list' || msg.t === 'friend-invite'
+    ) {
+      if (!authAllowed()) {
+        send(ws, { t: 'error', msg: 'Prea multe cereri. Așteaptă.' });
+        return;
+      }
+      const a = store.refresh(msg.token);
+      if (!a) {
+        send(ws, { t: 'error', msg: 'Sesiune expirată.' });
+        return;
+      }
+      if (msg.t === 'friend-list') {
+        send(ws, { t: 'friend-state', ...store.friendState(a.id, onlineIds()) });
+        return;
+      }
+      if (msg.t === 'friend-invite') {
+        // invită un prieten în camera custom unde ești (trebuie să fii în lobby)
+        let mine: Lobby | null = null;
+        for (const l of lobbies.values()) {
+          if (l.players.has(a.id)) { mine = l; break; }
+        }
+        if (!mine) {
+          send(ws, { t: 'error', msg: 'Creează mai întâi o cameră.' });
+          return;
+        }
+        const other = store.accountByName(msg.name);
+        if (!other || !a.friends.includes(other.id)) {
+          send(ws, { t: 'error', msg: 'Doar prietenii pot fi invitați.' });
+          return;
+        }
+        const delivered = sendToAccount(other.id, {
+          t: 'room-invite', code: mine.code, from: a.name, mode: mine.modeId,
+        });
+        send(ws, {
+          t: 'error',
+          msg: delivered ? `Invitație trimisă lui ${other.name}!` : `${other.name} nu e online acum. Dă-i codul: ${mine.code}`,
+        });
+        return;
+      }
+      const r =
+        msg.t === 'friend-add' ? store.friendAdd(a.id, msg.name)
+        : msg.t === 'friend-accept' ? store.friendAccept(a.id, msg.name)
+        : msg.t === 'friend-decline' ? store.friendDecline(a.id, msg.name)
+        : store.friendRemove(a.id, msg.name);
+      if (!r.ok) {
+        send(ws, { t: 'error', msg: r.msg });
+        return;
+      }
+      // actualizează ambele părți live
+      send(ws, { t: 'friend-state', ...store.friendState(a.id, onlineIds()) });
+      const other = store.accountByName(msg.name);
+      if (other) {
+        sendToAccount(other.id, { t: 'friend-state', ...store.friendState(other.id, onlineIds()) });
+      }
+      return;
+    }
+    if (msg.t === 'room-create' || msg.t === 'room-join' || msg.t === 'room-hero' || msg.t === 'room-leave' || msg.t === 'room-start') {
+      // room-hero vine pe socket-ul de lobby (fără token în mesaj)
+      const token = msg.t === 'room-hero' ? '' : ((msg as { token?: string }).token ?? '');
+      const myId = lobbyByWs.get(ws) ?? store.refresh(token)?.id;
+      const me = myId ? store.accountById(myId) : undefined;
+      if (!me) {
+        send(ws, { t: 'error', msg: 'Intră în cont pentru camere custom.' });
+        return;
+      }
+      if (msg.t === 'room-create') {
+        leaveLobby(ws);
+        lobbyByWs.set(ws, me.id);
+        trackSocket(me.id, ws);
+        const mode = VALID_MODES.has(msg.mode) && msg.mode !== 'training' ? msg.mode : 'knockout';
+        const map = mapById(msg.map);
+        const code = `C${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+        const l: Lobby = {
+          code, modeId: mode, mapId: map.id, hostId: me.id,
+          players: new Map([[me.id, { ws, name: me.name, hero: 'volt' }]]),
+        };
+        lobbies.set(code, l);
+        console.log(`[lobby] ${code} ${mode} pe ${map.name} (host ${me.name})`);
+        broadcastLobby(l);
+        return;
+      }
+      if (msg.t === 'room-join') {
+        const l = lobbies.get(String(msg.code ?? '').toUpperCase());
+        if (!l) {
+          send(ws, { t: 'error', msg: 'Cod inexistent.' });
+          return;
+        }
+        if (l.players.size >= roomSize(l.modeId)) {
+          send(ws, { t: 'error', msg: 'Camera e plină.' });
+          return;
+        }
+        leaveLobby(ws);
+        lobbyByWs.set(ws, me.id);
+        trackSocket(me.id, ws);
+        l.players.set(me.id, { ws, name: me.name, hero: 'volt' });
+        broadcastLobby(l);
+        return;
+      }
+      // restul: trebuie să fii într-un lobby
+      let mine: Lobby | null = null;
+      for (const l of lobbies.values()) {
+        if (l.players.has(me.id)) { mine = l; break; }
+      }
+      if (!mine) {
+        send(ws, { t: 'room-state', room: null });
+        return;
+      }
+      if (msg.t === 'room-hero') {
+        const pl = mine.players.get(me.id);
+        if (pl && isHeroId(msg.hero)) {
+          pl.hero = msg.hero;
+          broadcastLobby(mine);
+        }
+        return;
+      }
+      if (msg.t === 'room-leave') {
+        leaveLobby(ws);
+        send(ws, { t: 'room-state', room: null });
+        return;
+      }
+      if (msg.t === 'room-start') {
+        if (mine.hostId !== me.id) {
+          send(ws, { t: 'error', msg: 'Doar host-ul pornește meciul.' });
+          return;
+        }
+        if (mine.players.size < 2) {
+          send(ws, { t: 'error', msg: 'Așteaptă măcar un prieten (minim 2 jucători).' });
+          return;
+        }
+        const map = mapById(mine.mapId);
+        const room: Room = {
+          code: mine.code,
+          modeId: mine.modeId,
+          match: new Match(mine.modeId, map, []),
+          players: [],
+          createdAt: Date.now(),
+          endedAt: 0,
+          snapT: 0,
+          custom: { hostId: mine.hostId, members: new Map() },
+        };
+        // echipe: host 0, restul alternativ (showdown: fiecare separat)
+        let i = 0;
+        for (const [pid, pl] of mine.players) {
+          const acc = store.accountById(pid);
+          const hero = isHeroId(pl.hero) ? pl.hero : 'volt';
+          const power = acc ? Math.max(1, Math.min(11, Math.round(acc.heroPower[hero] ?? 1))) : 1;
+          const def = scaleHeroDef(heroById(hero), power);
+          const team = mine.modeId === 'showdown' ? i : i % 2;
+          const a = (i / Math.max(1, mine.players.size)) * Math.PI * 2;
+          const half = map.size / 2;
+          const sp = mine.modeId === 'showdown'
+            ? { x: Math.cos(a) * half * 0.72, z: Math.sin(a) * half * 0.72 }
+            : team === 0 ? { x: -half + 4, z: (i % 3) * 2 - 2 } : { x: half - 4, z: (i % 3) * 2 - 2 };
+          const fid = uid();
+          room.match.fighters.push({
+            id: fid, name: pl.name, heroId: hero, def, team,
+            isBot: false, isLocal: false,
+            x: sp.x, z: sp.z, facing: 0, hp: def.hp, alive: true,
+            respawnT: 0, reloadT: 0, superCharge: 0, superReady: false,
+            supersUsed: 0, kills: 0, deaths: 0, stars: 0, power, powerups: 0,
+            aiT: 0, aiTx: 0, aiTz: 0, aiMode: 'fight',
+          });
+          room.custom!.members.set(pid, fid);
+          i++;
+        }
+        rooms.set(room.code, room);
+        lobbies.delete(mine.code);
+        console.log(`[start] custom ${room.code} ${room.modeId} cu ${room.match.fighters.length} jucători`);
+        for (const [, pl] of mine.players) {
+          if (pl.ws.readyState === 1) {
+            send(pl.ws, {
+              t: 'room-state',
+              room: {
+                code: room.code, mode: room.modeId, map: mine.mapId,
+                mapName: map.name, host: false, players: [], started: true,
+              },
+            });
+          }
+        }
+        return;
+      }
+    }
     if (msg.t === 'input' && room && player) {
       // validare server-side: clamp + NaN-drop + rate-limit atac
       player.input = {
@@ -351,6 +718,8 @@ wss.on('connection', (ws: WebSocket, req) => {
   });
 
   ws.on('close', () => {
+    leaveLobby(ws);
+    untrackSocket(ws);
     if (room && player) {
       // deconectat -> luptătorul devine bot (meciul continuă pentru ceilalți)
       const f = room.match.fighters.find((x) => x.id === player!.fighterId);

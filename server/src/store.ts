@@ -4,6 +4,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { MATCH_REWARDS, QUESTS, SHOP_ITEMS, XP_PER_LEVEL } from '../../src/data/economy.js';
+import { HEROES, POWER_MAX, UPGRADE_COST } from '../../src/data/heroes.js';
 
 export interface Account {
   id: string;
@@ -24,6 +25,10 @@ export interface Account {
   skins: string[];
   equippedSkin: Record<string, string>;
   questsClaimed: string[];
+  heroPower: Record<string, number>;
+  friends: string[];
+  incoming: string[];
+  outgoing: string[];
   createdAt: number;
 }
 
@@ -41,6 +46,7 @@ export interface PublicProfile {
   skins: string[];
   equippedSkin: Record<string, string>;
   questsClaimed: string[];
+  heroPower: Record<string, number>;
 }
 
 const DIR = process.env.DATA_DIR || join(process.cwd(), 'data');
@@ -59,6 +65,7 @@ export function toPublic(a: Account): PublicProfile {
     supers: a.supers, stars: a.stars,
     skins: [...a.skins], equippedSkin: { ...a.equippedSkin },
     questsClaimed: [...a.questsClaimed],
+    heroPower: { ...a.heroPower },
   };
 }
 
@@ -77,11 +84,14 @@ class Store {
       const arr = JSON.parse(readFileSync(FILE, 'utf8')) as Account[];
       for (const a of arr) {
         // migrare conturi vechi (câmpuri noi cu default)
-        a.supers ??= 0;
-        a.stars ??= 0;
+        a.supers ??= 0;        a.stars ??= 0;
         a.skins ??= [];
         a.equippedSkin ??= {};
         a.questsClaimed ??= [];
+        a.heroPower ??= {};
+        a.friends ??= [];
+        a.incoming ??= [];
+        a.outgoing ??= [];
         this.accounts.set(a.id, a);
         this.byName.set(a.name.toLowerCase(), a.id);
         if (a.token && a.tokenExp > Date.now()) this.byToken.set(a.token, a.id);
@@ -125,6 +135,7 @@ class Store {
       coins: 250, gems: 30, xp: 0, level: 1, trophies: 0,
       wins: 0, kills: 0, supers: 0, stars: 0,
       skins: [], equippedSkin: {}, questsClaimed: [],
+      heroPower: {}, friends: [], incoming: [], outgoing: [],
       createdAt: Date.now(),
     };
     this.issueToken(a);
@@ -252,6 +263,105 @@ class Store {
     this.addRewards(a, q.rewardCoins, q.rewardXp);
     this.persist();
     return { ok: true, msg: `Misiune completă! +${q.rewardCoins} 🪙`, profile: toPublic(a) };
+  }
+  /** Upgrade putere erou (nivele 1-11, cost în monezi). */
+  upgradeHero(id: string, heroId: string): { ok: boolean; msg: string; profile?: PublicProfile } {
+    const a = this.accounts.get(id);
+    if (!a) return { ok: false, msg: 'Cont inexistent.' };
+    if (!HEROES.some((h) => h.id === heroId)) return { ok: false, msg: 'Erou inexistent.' };
+    const cur = Math.max(1, Math.min(POWER_MAX, Math.round(a.heroPower[heroId] ?? 1)));
+    if (cur >= POWER_MAX) return { ok: false, msg: 'Putere maximă atinsă!' };
+    const cost = UPGRADE_COST[cur] ?? 999999;
+    if (a.coins < cost) return { ok: false, msg: `Îți lipsesc ${cost - a.coins} monezi.` };
+    a.coins -= cost;
+    a.heroPower[heroId] = cur + 1;
+    this.persist();
+    return { ok: true, msg: `Putere ${cur + 1}!`, profile: toPublic(a) };
+  }
+
+  accountById(id: string): Account | undefined {
+    return this.accounts.get(id);
+  }
+
+  accountByName(name: string): Account | undefined {
+    const id = this.byName.get(String(name ?? '').trim().toLowerCase());
+    return id ? this.accounts.get(id) : undefined;
+  }
+
+  /** Cerere de prietenie către alt cont (după nume). */
+  friendAdd(id: string, name: string): { ok: boolean; msg: string } {
+    const a = this.accounts.get(id);
+    const b = this.accountByName(name);
+    if (!a) return { ok: false, msg: 'Cont inexistent.' };
+    if (!b) return { ok: false, msg: 'Jucătorul nu există.' };
+    if (b.id === a.id) return { ok: false, msg: 'Nu te poți adăuga singur.' };
+    if (a.friends.includes(b.id)) return { ok: false, msg: 'Sunteți deja prieteni.' };
+    if (a.outgoing.includes(b.id)) return { ok: false, msg: 'Cererea e deja trimisă.' };
+    if (a.incoming.includes(b.id)) {
+      // cerere reciprocă -> prietenie directă
+      return this.friendAccept(id, b.name);
+    }
+    a.outgoing.push(b.id);
+    b.incoming.push(a.id);
+    this.persist();
+    return { ok: true, msg: `Cerere trimisă lui ${b.name}!` };
+  }
+
+  friendAccept(id: string, name: string): { ok: boolean; msg: string } {
+    const a = this.accounts.get(id);
+    const b = this.accountByName(name);
+    if (!a || !b) return { ok: false, msg: 'Cerere inexistentă.' };
+    if (!a.incoming.includes(b.id)) return { ok: false, msg: 'Cerere inexistentă.' };
+    a.incoming = a.incoming.filter((x) => x !== b.id);
+    b.outgoing = b.outgoing.filter((x) => x !== a.id);
+    a.outgoing = a.outgoing.filter((x) => x !== b.id);
+    b.incoming = b.incoming.filter((x) => x !== a.id);
+    if (!a.friends.includes(b.id)) a.friends.push(b.id);
+    if (!b.friends.includes(a.id)) b.friends.push(a.id);
+    this.persist();
+    return { ok: true, msg: `Ești prieten cu ${b.name}!` };
+  }
+
+  friendDecline(id: string, name: string): { ok: boolean; msg: string } {
+    const a = this.accounts.get(id);
+    const b = this.accountByName(name);
+    if (!a || !b) return { ok: false, msg: 'Cerere inexistentă.' };
+    a.incoming = a.incoming.filter((x) => x !== b.id);
+    b.outgoing = b.outgoing.filter((x) => x !== a.id);
+    this.persist();
+    return { ok: true, msg: 'Cerere refuzată.' };
+  }
+
+  friendRemove(id: string, name: string): { ok: boolean; msg: string } {
+    const a = this.accounts.get(id);
+    const b = this.accountByName(name);
+    if (!a || !b) return { ok: false, msg: 'Prieten inexistent.' };
+    a.friends = a.friends.filter((x) => x !== b.id);
+    b.friends = b.friends.filter((x) => x !== a.id);
+    this.persist();
+    return { ok: true, msg: `${b.name} a fost șters din prieteni.` };
+  }
+
+  friendState(
+    id: string,
+    onlineIds: Set<string>,
+  ): { friends: { name: string; online: boolean; level: number; trophies: number }[]; incoming: { name: string; level: number }[]; outgoing: string[] } {
+    const a = this.accounts.get(id);
+    if (!a) return { friends: [], incoming: [], outgoing: [] };
+    return {
+      friends: a.friends.flatMap((fid) => {
+        const x = this.accounts.get(fid);
+        return x ? [{ name: x.name, online: onlineIds.has(x.id), level: x.level, trophies: x.trophies }] : [];
+      }),
+      incoming: a.incoming.flatMap((fid) => {
+        const x = this.accounts.get(fid);
+        return x ? [{ name: x.name, level: x.level }] : [];
+      }),
+      outgoing: a.outgoing.flatMap((fid) => {
+        const n = this.accounts.get(fid)?.name ?? '';
+        return n !== '' ? [n] : [];
+      }),
+    };
   }
 }
 
