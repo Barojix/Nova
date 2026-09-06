@@ -93,11 +93,17 @@ export class GameManager {
   private aimLines: THREE.Line[] = [];
   /** inele de șoc la KO (pool reutilizabil) */
   private shockRings: { mesh: THREE.Mesh; t: number }[] = [];
+  /** flash-uri la gura țevii (pool) */
+  private muzzles: { mesh: THREE.Sprite; t: number }[] = [];
+  /** fascicule verticale la powerup/spawn (pool) */
+  private beams: { mesh: THREE.Mesh; t: number }[] = [];
   private starGeo = new THREE.OctahedronGeometry(0.45);
   private starMat = new THREE.MeshBasicMaterial({ color: 0xffe066 });
 
   private modeId = 'knockout';
   private mapId = 'crystal-hollow';
+  private teamSize = 0; // showdown: 1 solo, 2 duo, 3 trio, 4 squad
+  private showcaseSpin = 0; // rotire manuală erou meniu
   private localId = 0;
   private state: 'idle' | 'countdown' | 'battle' | 'end' = 'idle';
   private countdownT = 0;
@@ -147,6 +153,25 @@ export class GameManager {
     this.resize();
     window.addEventListener('resize', () => this.resize());
 
+    // rotirea eroului cu degetul în meniu (trage stânga/dreapta pe scenă)
+    let spinId: number | null = null;
+    let spinX = 0;
+    canvas.addEventListener('pointerdown', (e) => {
+      if (!this.showcaseRig || this.state === 'battle') return;
+      spinId = e.pointerId;
+      spinX = e.clientX;
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== spinId || !this.showcaseRig) return;
+      this.showcaseSpin += (e.clientX - spinX) * 0.012;
+      spinX = e.clientX;
+    });
+    const spinEnd = (e: PointerEvent) => {
+      if (e.pointerId === spinId) spinId = null;
+    };
+    canvas.addEventListener('pointerup', spinEnd);
+    canvas.addEventListener('pointercancel', spinEnd);
+
     // aim cu mouse pentru desktop
     canvas.addEventListener('pointermove', (e) => {
       if (this.state !== 'battle' || !this.localFighter()) return;
@@ -192,12 +217,25 @@ export class GameManager {
     const dir = new THREE.DirectionalLight(0xfff2d9, 1.2);
     dir.position.set(6, 10, 4);
     this.showcaseGroup.add(dir);
+    // dioramă: disc de scenă + trepte + fundal cristale în culoarea eroului
+    const disc = new THREE.Mesh(
+      new THREE.CylinderGeometry(8, 8.6, 0.3, 40),
+      new THREE.MeshLambertMaterial({ color: 0x141a3a })
+    );
+    disc.position.y = -0.65;
+    this.showcaseGroup.add(disc);
     const plat = new THREE.Mesh(
       new THREE.CylinderGeometry(2.2, 2.6, 0.5, 24),
       new THREE.MeshLambertMaterial({ color: 0x1e2450 })
     );
     plat.position.y = -0.25;
     this.showcaseGroup.add(plat);
+    const step = new THREE.Mesh(
+      new THREE.CylinderGeometry(3.1, 3.4, 0.25, 24),
+      new THREE.MeshLambertMaterial({ color: 0x232b58 })
+    );
+    step.position.y = -0.55;
+    this.showcaseGroup.add(step);
     const glowRing = new THREE.Mesh(
       new THREE.RingGeometry(2.3, 2.7, 32),
       new THREE.MeshBasicMaterial({ color: def.color, transparent: true, opacity: 0.8, side: THREE.DoubleSide })
@@ -205,6 +243,23 @@ export class GameManager {
     glowRing.rotation.x = -Math.PI / 2;
     glowRing.position.y = 0.02;
     this.showcaseGroup.add(glowRing);
+    // cristale de fundal în culoarea eroului
+    const crysMat = new THREE.MeshLambertMaterial({ color: def.color, emissive: def.color, emissiveIntensity: 0.25 });
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + 0.4;
+      const h = 2.5 + (i % 3);
+      const c = new THREE.Mesh(new THREE.OctahedronGeometry(0.55), crysMat);
+      c.position.set(Math.cos(a) * 6.2, h / 2 - 0.5, Math.sin(a) * 6.2);
+      c.scale.y = h;
+      this.showcaseGroup.add(c);
+    }
+    // con de reflector
+    const spot = new THREE.Mesh(
+      new THREE.ConeGeometry(3.4, 9, 24, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xfff2d9, transparent: true, opacity: 0.06, side: THREE.DoubleSide, depthWrite: false })
+    );
+    spot.position.y = 4;
+    this.showcaseGroup.add(spot);
     this.showcaseRig = buildHero(def, Shop.equippedColor(heroId, def.color));
     this.showcaseRig.setTeamColor(0xb8f135);
     this.showcaseGroup.add(this.showcaseRig.group);
@@ -227,10 +282,11 @@ export class GameManager {
 
   // ---------- lifecycle ----------
 
-  startMatch(modeId: string, heroId: string, playerName: string, useOnline: boolean, room?: string, customMapId?: string) {
+  startMatch(modeId: string, heroId: string, playerName: string, useOnline: boolean, room?: string, customMapId?: string, teamSize?: number) {
     this.cleanup();
     this.modeId = modeId;
     this.mapId = customMapId ?? mapForMode(modeId);
+    this.teamSize = modeId === 'showdown' ? (teamSize ?? 1) : 0;
     const mapDef = mapById(this.mapId);
     audio.unlock();
     this.ui.showMatchUI(modeId);
@@ -281,9 +337,12 @@ export class GameManager {
     const myPower = Math.max(1, Math.min(11, Math.round(save.data.heroPower[heroId] ?? 1)));
     const myGadget = save.data.heroGadgets[heroId];
     if (modeId === 'showdown') {
+      // Solo 10×1, Duo 5×2, Trio 3×3, Squad 2×4 — coechipierii apar pe pad-uri
+      const size = this.teamSize >= 2 && this.teamSize <= 4 ? this.teamSize : 1;
+      const total = size === 1 ? 10 : size === 2 ? 10 : size === 3 ? 9 : 8;
       const specs: PlayerSpec[] = [{ name: playerName, heroId, team: 0, isBot: false, isLocal: true, power: myPower, gadget: myGadget }];
-      for (let i = 0; i < 9; i++) {
-        specs.push({ name: nb(), heroId: hb(), team: i + 1, isBot: true, power: botPower() });
+      for (let i = 1; i < total; i++) {
+        specs.push({ name: nb(), heroId: hb(), team: Math.floor(i / size), isBot: true, power: botPower() });
       }
       return specs;
     }
@@ -378,6 +437,7 @@ export class GameManager {
     this.net.connect({
       name: playerName, heroId, modeId, room,
       token: Auth.loggedIn ? Auth.token : undefined,
+      team: modeId === 'showdown' && this.teamSize > 1 ? this.teamSize : undefined,
     });
     audio.startMusic(true);
   }
@@ -387,7 +447,10 @@ export class GameManager {
     if (e === 'shoot') {
       const f = d.id !== undefined ? this.remoteFighters.get(d.id) : undefined;
       audio.sfx('shoot');
-      if (f) this.particles.spawn(f.x, 1.2, f.z, 0xffe066, 4, 3, 0.3);
+      if (f) {
+        this.particles.spawn(f.x, 1.2, f.z, 0xffe066, 4, 3, 0.3);
+        this.spawnMuzzle(f.x, f.z, 0xffe066);
+      }
     } else if (e === 'super') {
       audio.sfx('super');
       this.shake.add(0.35);
@@ -416,7 +479,10 @@ export class GameManager {
     } else if (e === 'powerup' && d.id !== undefined) {
       const f = this.remoteFighters.get(d.id);
       audio.sfx('powerup');
-      if (f) this.particles.spawn(f.x, 1.2, f.z, 0xff9f1c, 14, 6, 0.5);
+      if (f) {
+        this.particles.spawn(f.x, 1.2, f.z, 0xff9f1c, 14, 6, 0.5);
+        this.spawnBeam(f.x, f.z, 0xff9f1c);
+      }
     }
   }
 
@@ -450,6 +516,16 @@ export class GameManager {
     this.match = null;
     if (this.showcaseRig && this.showcaseGroup) {
       this.scene.remove(this.showcaseGroup);
+      // eliberează geometriile/materialele dioramei (altfel leak la fiecare vizită în meniu)
+      this.showcaseGroup.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (mesh.isMesh) {
+          mesh.geometry?.dispose?.();
+          const mt = mesh.material as THREE.Material | THREE.Material[] | undefined;
+          if (Array.isArray(mt)) mt.forEach((m) => m.dispose?.());
+          else mt?.dispose?.();
+        }
+      });
       this.showcaseRig = null;
       this.showcaseGroup = null;
     }
@@ -475,6 +551,14 @@ export class GameManager {
     for (const r of this.shockRings) {
       r.t = 1;
       r.mesh.visible = false;
+    }
+    for (const m of this.muzzles) {
+      m.t = 1;
+      m.mesh.visible = false;
+    }
+    for (const b of this.beams) {
+      b.t = 1;
+      b.mesh.visible = false;
     }
     if (this.gasRing) {
       this.scene.remove(this.gasRing);
@@ -708,6 +792,7 @@ export class GameManager {
     if (e.type === 'shoot') {
       const f = m.fighters.find((x) => x.id === e.id);
       this.revealUntil.set(e.id, this.clock + 1);
+      if (f) this.spawnMuzzle(f.x + Math.sin(f.facing) * 1.2, f.z + Math.cos(f.facing) * 1.2, f.def.accent);
       const v = this.views.get(e.id);
       v?.rig.playAttack();
       audio.sfx('shoot');
@@ -801,6 +886,7 @@ export class GameManager {
       this.shake.add(0.15);
       if (f) {
         this.particles.spawn(f.x, 1.2, f.z, 0xff9f1c, 16, 6, 0.5);
+        this.spawnBeam(f.x, f.z, 0xff9f1c);
         if (f.isLocal) {
           this.w2s(f.x, 1.5, f.z, (p) =>
             this.floaters.spawn(() => p, f.x, 2.2, f.z, '+PUTERE 💥', 'heal'));
@@ -847,7 +933,7 @@ export class GameManager {
     this.state = 'end';
     const local = this.localFighter();
     const won = this.modeId === 'showdown'
-      ? !!local?.alive
+      ? !!local?.alive && local.team === winner
       : local
         ? local.team === winner
         : false;
@@ -1230,6 +1316,63 @@ export class GameManager {
       r.mesh.scale.set(s, s, s);
       (r.mesh.material as THREE.MeshBasicMaterial).opacity = 0.8 * (1 - r.t);
     }
+    for (const m of this.muzzles) {
+      if (m.t >= 1) {
+        m.mesh.visible = false;
+        continue;
+      }
+      m.t = Math.min(1, m.t + dt * 14);
+      const s = 0.9 - m.t * 0.5;
+      m.mesh.scale.set(s, s, 1);
+      (m.mesh.material as THREE.SpriteMaterial).opacity = 1 - m.t;
+    }
+    for (const b of this.beams) {
+      if (b.t >= 1) {
+        b.mesh.visible = false;
+        continue;
+      }
+      b.t = Math.min(1, b.t + dt * 2.2);
+      const s = 1 + b.t * 1.6;
+      b.mesh.scale.set(s, 1, s);
+      (b.mesh.material as THREE.MeshBasicMaterial).opacity = 0.55 * (1 - b.t);
+    }
+  }
+
+  private spawnMuzzle(x: number, z: number, color: number) {
+    let m = this.muzzles.find((s) => s.t >= 1);
+    if (!m) {
+      if (this.muzzles.length >= 6) return;
+      const mesh = new THREE.Sprite(new THREE.SpriteMaterial({
+        color: 0xffffff, transparent: true, opacity: 1, depthWrite: false,
+      }));
+      mesh.visible = false;
+      this.scene.add(mesh);
+      m = { mesh, t: 1 };
+      this.muzzles.push(m);
+    }
+    m.t = 0;
+    m.mesh.visible = true;
+    m.mesh.position.set(x, 1.1, z);
+    (m.mesh.material as THREE.SpriteMaterial).color.setHex(color);
+  }
+
+  private spawnBeam(x: number, z: number, color: number) {
+    let b = this.beams.find((s) => s.t >= 1);
+    if (!b) {
+      if (this.beams.length >= 4) return;
+      const mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.5, 0.9, 5, 12, 1, true),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false })
+      );
+      mesh.visible = false;
+      this.scene.add(mesh);
+      b = { mesh, t: 1 };
+      this.beams.push(b);
+    }
+    b.t = 0;
+    b.mesh.visible = true;
+    b.mesh.position.set(x, 2.5, z);
+    (b.mesh.material as THREE.MeshBasicMaterial).color.setHex(color);
   }
   private updateAimGuide() {
     const st = this.controls.state;
@@ -1329,8 +1472,8 @@ export class GameManager {
   private updateCamera(_dt: number) {
     void _dt;
     if (this.showcaseRig) {
-      // cinematică orbitală în meniu
-      const a = this.clock * 0.25;
+      // cinematică orbitală în meniu + rotire manuală cu degetul
+      const a = this.clock * 0.25 + this.showcaseSpin;
       this.camera.position.set(Math.sin(a) * 6.5, 3.6, Math.cos(a) * 6.5);
       this.camera.lookAt(0, 1.2, 0);
       return;

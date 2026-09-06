@@ -133,6 +133,8 @@ export class Match {
   modeId: string;
   map: MapDef;
   walls: { minX: number; maxX: number; minZ: number; maxZ: number }[];
+  bushes: { x: number; z: number; r: number }[]; // scalate la lumea reală
+  half: number; // semi-latura reală (size × scale / 2)
   time = 0;
   over = false;
   winner = -1;
@@ -152,12 +154,13 @@ export class Match {
   constructor(modeId: string, map: MapDef, specs: PlayerSpec[]) {
     this.modeId = modeId;
     this.map = map;
-    const half = map.size / 2;
+    const S = map.scale ?? 1;
+    this.half = (map.size / 2) * S;
     this.walls = map.walls.map((w) => ({
-      minX: w.x - w.w / 2, maxX: w.x + w.w / 2,
-      minZ: w.z - w.d / 2, maxZ: w.z + w.d / 2,
+      minX: (w.x - w.w / 2) * S, maxX: (w.x + w.w / 2) * S,
+      minZ: (w.z - w.d / 2) * S, maxZ: (w.z + w.d / 2) * S,
     }));
-    void half;
+    this.bushes = map.bushes.map((b) => ({ x: b.x * S, z: b.z * S, r: b.r * S }));
     specs.forEach((s, i) => {
       let def = scaleHeroDef(heroById(s.heroId), s.power ?? 1);
       // gadgeturi pasive (aplicate la naștere)
@@ -195,33 +198,34 @@ export class Match {
     // cutii distructibile (showdown): spargi → cuburi de putere
     if (modeId === 'showdown') {
       for (const c of map.crates ?? []) {
-        this.crates.push({ id: uid(), x: c.x, z: c.z, hp: 900 });
+        this.crates.push({ id: uid(), x: c.x * S, z: c.z * S, hp: 900 });
       }
-      this.gasR = (map.size / 2) * 1.35;
+      this.gasR = this.half * 1.35;
     }
     // seifuri (heist)
     if (modeId === 'heist') {
       for (const s of map.safes ?? []) {
-        this.safes.push({ team: s.team, hp: 12000, maxHp: 12000, x: s.x, z: s.z });
+        this.safes.push({ team: s.team, hp: 12000, maxHp: 12000, x: s.x * S, z: s.z * S });
       }
     }
   }
 
   private spawnPoint(team: number, i: number) {
     if (this.modeId === 'showdown') {
-      // cerc scalat cu harta (hărți mari de showdown)
-      const r = (this.map.size / 2) * 0.72;
-      const n = this.fighters.length + 1;
-      const a = (i / 10) * Math.PI * 2;
-      return { x: Math.cos(a) * r, z: Math.sin(a) * r, n };
+      // cerc scalat cu harta; coechipierii apar grupați (pad-uri de echipă)
+      const r = this.half * 0.72;
+      const a = team * 2.39996 + (i % 4) * 0.12;
+      const rr = r - (i % 4) * 1.1;
+      return { x: Math.cos(a) * rr, z: Math.sin(a) * rr };
     }
+    const S = this.map.scale ?? 1;
     const arr = team === 0 ? this.map.spawnsA : this.map.spawnsB;
     const s = arr[(team === 0 ? this.spawnIdxA++ : this.spawnIdxB++) % arr.length];
-    return { x: s.x, z: s.z };
+    return { x: s.x * S, z: s.z * S };
   }
 
   private dropStar(x: number, z: number) {
-    this.stars.push({ id: uid(), x: clamp(x, -15, 15), z: clamp(z, -15, 15) });
+    this.stars.push({ id: uid(), x: clamp(x, -this.half, this.half), z: clamp(z, -this.half, this.half) });
   }
 
   local(): SimFighter | undefined {
@@ -231,7 +235,7 @@ export class Match {
   update(dt: number, inputs: Map<number, SimInput>) {
     if (this.over) return;
     this.time += dt;
-    const half = this.map.size / 2;
+    const half = this.half;
 
     // --- input + mișcare ---
     for (const f of this.fighters) {
@@ -409,12 +413,14 @@ export class Match {
     }
 
     if (this.modeId === 'showdown') {
-      const alive = this.fighters.filter((f) => f.alive);
-      if (alive.length <= 1 && this.fighters.length > 1) {
-        this.finish(alive[0] ? alive[0].team : 0, `${alive[0]?.name ?? 'Nimeni'} e ultimul în viață!`, alive[0]?.id);
+      const aliveTeams = [...new Set(this.fighters.filter((f) => f.alive).map((f) => f.team))];
+      if (aliveTeams.length <= 1 && this.fighters.length > 1) {
+        const t = aliveTeams[0] ?? 0;
+        const champ = this.fighters.find((f) => f.alive);
+        this.finish(t, `${champ?.name ?? 'Nimeni'} câștigă Showdown!`, champ?.id);
       }
       // gazul se strânge continuu de la început (hartă mare)
-      const half = this.map.size / 2;
+      const half = this.half;
       this.gasR = Math.max(1.5, half * 1.35 - this.time * (half * 1.2 / 110));
       const dpsMul = 1 + Math.max(0, this.time - 60) / 30;
       for (const f of this.fighters) {
@@ -524,7 +530,7 @@ export class Match {
       }
     }
     // knockback ușor
-    const p = collide(this.walls, this.map.size / 2, f.x + kx * 0.35, f.z + kz * 0.35, WALL_PAD);
+    const p = collide(this.walls, this.half, f.x + kx * 0.35, f.z + kz * 0.35, WALL_PAD);
     f.x = p.x; f.z = p.z;
     if (f.hp <= 0) {
       f.hp = 0;

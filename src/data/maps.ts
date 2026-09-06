@@ -5,7 +5,8 @@ export interface SpawnDef { x: number; z: number; team: number }
 export interface MapDef {
   id: string;
   name: string;
-  size: number; // hartă pătrată size x size
+  size: number; // hartă pătrată size x size (× scale)
+  scale?: number; // factor mărire (hărți mari, stil Brawl)
   walls: WallDef[];
   bushes: BushDef[];
   spawnsA: SpawnDef[];
@@ -21,6 +22,7 @@ export const MAPS: MapDef[] = [
     id: 'crystal-hollow',
     name: 'Hollow de Cristal',
     size: 34,
+    scale: 1.3,
     walls: [
       // centru — 4 blocuri în cruce cu deschidere
       { x: -3, z: -3, w: 4, d: 1.2 }, { x: 3, z: -3, w: 4, d: 1.2 },
@@ -51,6 +53,7 @@ export const MAPS: MapDef[] = [
     id: 'dune-rush',
     name: 'Viteza Dunelor',
     size: 30,
+    scale: 1.2,
     walls: [
       { x: 0, z: -6, w: 10, d: 1.2 }, { x: 0, z: 6, w: 10, d: 1.2 },
       { x: -5, z: 0, w: 1.4, d: 6 }, { x: 5, z: 0, w: 1.4, d: 6 },
@@ -72,6 +75,7 @@ export const MAPS: MapDef[] = [
     id: 'oaza-stelelor',
     name: 'Oaza Stelelor',
     size: 36,
+    scale: 1.3,
     walls: [
       { x: 0, z: 0, w: 3, d: 3 },
       { x: -7, z: -5, w: 5, d: 1.2 }, { x: 7, z: 5, w: 5, d: 1.2 },
@@ -97,6 +101,7 @@ export const MAPS: MapDef[] = [
     id: 'mina-gemelina',
     name: 'Mina Gemelină',
     size: 36,
+    scale: 1.3,
     mine: { x: 0, z: 0 },
     walls: [
       { x: -4, z: 0, w: 1.4, d: 6 }, { x: 4, z: 0, w: 1.4, d: 6 },
@@ -121,6 +126,7 @@ export const MAPS: MapDef[] = [
     id: 'tunelul-seifului',
     name: 'Tunelul Seifului',
     size: 40,
+    scale: 1.35,
     safes: [
       { x: -16, z: 0, team: 0 }, { x: 16, z: 0, team: 1 },
     ],
@@ -150,6 +156,7 @@ export const MAPS: MapDef[] = [
     id: 'campia-furtunii',
     name: 'Câmpia Furtunii',
     size: 56,
+    scale: 1.1,
     walls: [
       // obstacole rare, împrăștiate (hartă mare de supraviețuire)
       { x: -14, z: -14, w: 6, d: 1.4 }, { x: 14, z: 14, w: 6, d: 1.4 },

@@ -62,8 +62,19 @@ export function losBlocked(walls: BuiltMap['walls'], ax: number, az: number, bx:
 
 export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
   const group = new THREE.Group();
-  const half = def.size / 2;
+  const S = def.scale ?? 1;
+  const half = (def.size / 2) * S;
   const disposables: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[] = [];
+  // RNG determinist per hartă (același aspect la fiecare meci)
+  let seed = 987654321;
+  for (const ch of def.id) seed = (seed * 31 + ch.charCodeAt(0)) % 100000;
+  const rnd = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  // cub unitar partajat (tot decorul blocky + zidurile îl refolosesc)
+  const cubeGeo = new THREE.BoxGeometry(1, 1, 1);
+  disposables.push(cubeGeo);
 
   // sol — canvas texture procedurală (nisip/cristal original)
   const cnv = document.createElement('canvas');
@@ -83,12 +94,12 @@ export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
   }
   const tex = new THREE.CanvasTexture(cnv);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(def.size / 8, def.size / 8);
+  tex.repeat.set((def.size * S) / 8, (def.size * S) / 8);
   disposables.push(tex);
 
   const groundMat = new THREE.MeshLambertMaterial({ map: tex });
   disposables.push(groundMat);
-  const groundGeo = new THREE.PlaneGeometry(def.size + 6, def.size + 6);
+  const groundGeo = new THREE.PlaneGeometry(def.size * S + 6, def.size * S + 6);
   disposables.push(groundGeo);
   const ground = new THREE.Mesh(groundGeo, groundMat);
   ground.rotation.x = -Math.PI / 2;
@@ -102,8 +113,8 @@ export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
   disposables.push(blockMatA, blockMatB, trimMat);
   {
     const F = half + 1.6;
-    const n = Math.max(6, Math.round(def.size / 3));
-    const step = (def.size + 3.2) / n;
+    const n = Math.max(6, Math.round((def.size * S) / 3));
+    const step = (def.size * S + 3.2) / n;
     const blockGeo = new THREE.BoxGeometry(1, 1, 1);
     disposables.push(blockGeo);
     let bi = 0;
@@ -131,10 +142,10 @@ export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
       m.scale.set(w, 1, d);
       group.add(m);
     };
-    trim(def.size + 3.4, 0.3, 0, -F);
-    trim(def.size + 3.4, 0.3, 0, F);
-    trim(0.3, def.size + 3.4, -F, 0);
-    trim(0.3, def.size + 3.4, F, 0);
+    trim(def.size * S + 3.4, 0.3, 0, -F);
+    trim(def.size * S + 3.4, 0.3, 0, F);
+    trim(0.3, def.size * S + 3.4, -F, 0);
+    trim(0.3, def.size * S + 3.4, F, 0);
     // turnuri de colț
     const towerGeo = new THREE.BoxGeometry(2.2, 3.4, 2.2);
     const capGeo = new THREE.BoxGeometry(2.7, 0.5, 2.7);
@@ -148,43 +159,67 @@ export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
       cp.position.set(px, 3.6, pz);
       group.add(cp);
     }
-    // decor exterior: pietre, plante, cristale (determinist per hartă)
-    const rockGeo = new THREE.DodecahedronGeometry(0.9);
-    const plantGeo = new THREE.ConeGeometry(0.7, 1.6, 7);
-    const crysGeo = new THREE.OctahedronGeometry(0.7);
-    disposables.push(rockGeo, plantGeo, crysGeo);
+    // decor exterior TEMATIC din cuburi (copaci, stânci, cristale, felinare)
+    // compuse logic, nu forme aruncate: fiecare „petic" e un mini-ansamblu
+    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4a2b });
+    const leafMatA = new THREE.MeshLambertMaterial({ color: 0x2fae5f });
+    const leafMatB = new THREE.MeshLambertMaterial({ color: 0x36c668 });
     const rockMat = new THREE.MeshLambertMaterial({ color: 0x5b6172 });
-    const plantMat = new THREE.MeshLambertMaterial({ color: 0x2fae5f });
+    const rockMat2 = new THREE.MeshLambertMaterial({ color: 0x6e7688 });
     const crysMat = new THREE.MeshLambertMaterial({ color: 0x7af0ff, emissive: 0x1a4a5a });
-    disposables.push(rockMat, plantMat, crysMat);
-    let seed = 12345;
-    for (const ch of def.id) seed = (seed * 31 + ch.charCodeAt(0)) % 100000;
-    const rnd = () => {
-      seed = (seed * 1103515245 + 12345) % 2147483648;
-      return seed / 2147483648;
-    };
+    const lampMat = new THREE.MeshLambertMaterial({ color: 0x2a2f45 });
+    const lampGlow = new THREE.MeshBasicMaterial({ color: 0xffe066 });
+    disposables.push(trunkMat, leafMatA, leafMatB, rockMat, rockMat2, crysMat, lampMat, lampGlow);
     const R = half + 5;
-    for (let i = 0; i < 42; i++) {
-      const a = rnd() * Math.PI * 2;
-      const r = R + rnd() * half * 1.6;
-      const x = Math.cos(a) * r, z = Math.sin(a) * r;
-      const kind = i % 3;
-      const m = new THREE.Mesh(
-        kind === 0 ? rockGeo : kind === 1 ? plantGeo : crysGeo,
-        kind === 0 ? rockMat : kind === 1 ? plantMat : crysMat
-      );
-      const s = 0.7 + rnd() * 1.6;
-      m.scale.setScalar(s);
-      m.position.set(x, (kind === 1 ? 0.8 : 0.4) * s, z);
-      m.rotation.y = rnd() * Math.PI;
+    const put = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number, ry = 0) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.scale.set(sx, sy, sz);
+      m.position.set(x, y, z);
+      m.rotation.y = ry;
+      m.castShadow = settings.shadows;
       group.add(m);
+    };
+    for (let i = 0; i < 30; i++) {
+      const a = rnd() * Math.PI * 2;
+      const r = R + rnd() * half * 1.5;
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      const kind = i % 5;
+      if (kind === 0) {
+        // copac cubist: trunchi + 3 cuburi de frunziș
+        put(cubeGeo, trunkMat, x, 0.9, z, 0.7, 1.8, 0.7);
+        put(cubeGeo, leafMatA, x, 2.4, z, 2.2, 1.6, 2.2, 0.2);
+        put(cubeGeo, leafMatB, x + 0.7, 3.1, z - 0.4, 1.3, 1.0, 1.3, 0.5);
+        put(cubeGeo, leafMatA, x - 0.6, 3.0, z + 0.5, 1.0, 0.9, 1.0, 0.1);
+      } else if (kind === 1) {
+        // morman de stânci
+        put(cubeGeo, rockMat, x, 0.5, z, 1.6, 1.0, 1.4, 0.3);
+        put(cubeGeo, rockMat2, x + 0.8, 0.35, z + 0.3, 0.9, 0.7, 0.8, 0.7);
+        put(cubeGeo, rockMat, x - 0.6, 1.15, z - 0.2, 0.8, 0.7, 0.8, 0.2);
+      } else if (kind === 2) {
+        // grup de cristale
+        const cg = new THREE.OctahedronGeometry(0.7);
+        disposables.push(cg);
+        put(cg, crysMat, x, 0.6, z, 1, 1.4, 1);
+        put(cg, crysMat, x + 0.8, 0.35, z + 0.2, 0.6, 0.8, 0.6);
+        put(cg, crysMat, x - 0.7, 0.3, z - 0.3, 0.5, 0.7, 0.5);
+      } else if (kind === 3) {
+        // felinar: stâlp + cap luminos
+        put(cubeGeo, lampMat, x, 1.1, z, 0.35, 2.2, 0.35);
+        put(cubeGeo, lampGlow, x, 2.4, z, 0.55, 0.5, 0.55);
+        put(cubeGeo, lampMat, x, 2.8, z, 0.7, 0.18, 0.7);
+      } else {
+        // tufă decorativă + flori cub
+        put(cubeGeo, leafMatB, x, 0.4, z, 1.4, 0.8, 1.4, 0.4);
+        put(cubeGeo, leafMatA, x + 0.3, 0.85, z - 0.2, 0.8, 0.5, 0.8, 0.2);
+        put(cubeGeo, lampGlow, x - 0.3, 0.95, z + 0.3, 0.25, 0.25, 0.25);
+      }
     }
     // fâșie exterioară cu ACELAȘI pământ (se pierde marginea hărții în orizont)
     const skirtTex = new THREE.CanvasTexture(cnv);
     skirtTex.wrapS = skirtTex.wrapT = THREE.RepeatWrapping;
-    skirtTex.repeat.set((def.size * 4) / 8, (def.size * 4) / 8);
+    skirtTex.repeat.set((def.size * S * 4) / 8, (def.size * S * 4) / 8);
     disposables.push(skirtTex);
-    const skirtGeo = new THREE.PlaneGeometry(def.size * 4, def.size * 4);
+    const skirtGeo = new THREE.PlaneGeometry(def.size * S * 4, def.size * S * 4);
     disposables.push(skirtGeo);
     const skirtMat = new THREE.MeshLambertMaterial({ map: skirtTex, color: 0x8a8fa8 });
     disposables.push(skirtMat);
@@ -194,54 +229,74 @@ export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
     group.add(skirt);
   }
 
-  // ziduri — blocuri cristal albastru-violet
-  const wallMat = new THREE.MeshLambertMaterial({ color: 0x3a4a8c });
-  const wallTopMat = new THREE.MeshLambertMaterial({ color: 0x5a70d8 });
-  disposables.push(wallMat, wallTopMat);
+  // ziduri din CUBURI conectate (stil Brawl): fiecare zid = rânduri de cuburi
+  // cu înălțimi/nuante variate + capac luminos
+  const wallMatA = new THREE.MeshLambertMaterial({ color: 0x3a4a8c });
+  const wallMatB = new THREE.MeshLambertMaterial({ color: 0x46589e });
+  const wallTopMat = new THREE.MeshLambertMaterial({ color: 0x7af0ff, emissive: 0x1a3a4a });
+  disposables.push(wallMatA, wallMatB, wallTopMat);
   const walls: BuiltMap['walls'] = [];
   for (const w of def.walls) {
-    const h = 1.6;
-    const geo = new THREE.BoxGeometry(w.w, h, w.d);
-    disposables.push(geo);
-    const m = new THREE.Mesh(geo, wallMat);
-    m.position.set(w.x, h / 2, w.z);
-    m.castShadow = settings.shadows;
-    group.add(m);
-    const topGeo = new THREE.BoxGeometry(w.w + 0.15, 0.18, w.d + 0.15);
-    disposables.push(topGeo);
-    const top = new THREE.Mesh(topGeo, wallTopMat);
-    top.position.set(w.x, h + 0.09, w.z);
-    group.add(top);
+    const wx = w.x * S, wz = w.z * S, ww = w.w * S, wd = w.d * S;
+    const cell = 1.1 * S;
+    const nx = Math.max(1, Math.round(ww / cell));
+    const nz = Math.max(1, Math.round(wd / cell));
+    for (let ix = 0; ix < nx; ix++) {
+      for (let iz = 0; iz < nz; iz++) {
+        const h = 1.5 + rnd() * 0.5;
+        const m = new THREE.Mesh(cubeGeo, (ix + iz) % 2 ? wallMatA : wallMatB);
+        m.scale.set((ww / nx) * 0.98, h, (wd / nz) * 0.98);
+        m.position.set(
+          wx - ww / 2 + (ww / nx) * (ix + 0.5),
+          h / 2,
+          wz - wd / 2 + (wd / nz) * (iz + 0.5)
+        );
+        m.castShadow = settings.shadows;
+        group.add(m);
+        // capac luminos pe fiecare cub
+        const cap = new THREE.Mesh(cubeGeo, wallTopMat);
+        cap.scale.set((ww / nx) * 0.7, 0.12, (wd / nz) * 0.7);
+        cap.position.set(m.position.x, h + 0.06, m.position.z);
+        group.add(cap);
+      }
+    }
     walls.push({
-      minX: w.x - w.w / 2, maxX: w.x + w.w / 2,
-      minZ: w.z - w.d / 2, maxZ: w.z + w.d / 2,
+      minX: wx - ww / 2, maxX: wx + ww / 2,
+      minZ: wz - wd / 2, maxZ: wz + wd / 2,
     });
   }
 
-  // tufișuri — pâlcuri 3D (ascund vizual eroii inamici)
-  const bushMat = new THREE.MeshLambertMaterial({
-    color: 0x2fae5f, transparent: true, opacity: 0.85,
-  });
-  disposables.push(bushMat);
-  const bushDark = new THREE.MeshLambertMaterial({ color: 0x1e7a40 });
-  disposables.push(bushDark);
-  const bushes = def.bushes.map((b) => ({ ...b }));
-  for (const b of def.bushes) {
-    const geo = new THREE.CircleGeometry(b.r, 20);
-    disposables.push(geo);
-    const m = new THREE.Mesh(geo, bushMat);
-    m.rotation.x = -Math.PI / 2;
-    m.position.set(b.x, 0.05, b.z);
-    group.add(m);
-    // 3 smocuri sferice — luptătorul „se scufundă" vizual în iarbă
-    for (let k = 0; k < 3; k++) {
-      const a = (k / 3) * Math.PI * 2 + b.x;
-      const rr = b.r * 0.45;
-      const tuftGeo = new THREE.SphereGeometry(rr, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2);
-      disposables.push(tuftGeo);
-      const tuft = new THREE.Mesh(tuftGeo, k % 2 ? bushMat : bushDark);
-      tuft.position.set(b.x + Math.cos(a) * b.r * 0.4, 0.02, b.z + Math.sin(a) * b.r * 0.4);
-      group.add(tuft);
+  // tufișuri din CUBURI de iarbă conectate (stil Brawl) — acoperire totală
+  const bushMatA = new THREE.MeshLambertMaterial({ color: 0x2fae5f });
+  const bushMatB = new THREE.MeshLambertMaterial({ color: 0x27a054 });
+  const bushMatC = new THREE.MeshLambertMaterial({ color: 0x36c668 });
+  disposables.push(bushMatA, bushMatB, bushMatC);
+  const bushes = def.bushes.map((b) => ({ x: b.x * S, z: b.z * S, r: b.r * S }));
+  const bushMats = [bushMatA, bushMatB, bushMatC];
+  for (const b of bushes) {
+    // covor de bază
+    const baseGeo = new THREE.CircleGeometry(b.r, 18);
+    disposables.push(baseGeo);
+    const base = new THREE.Mesh(baseGeo, bushMatB);
+    base.rotation.x = -Math.PI / 2;
+    base.position.set(b.x, 0.04, b.z);
+    group.add(base);
+    // cuburi de iarbă: grilă hexagonală în cerc, înălțimi aleatorii
+    const cell = 0.85 * S;
+    const n = Math.ceil((b.r * 2) / cell);
+    for (let ix = 0; ix <= n; ix++) {
+      for (let iz = 0; iz <= n; iz++) {
+        const ox = -b.r + ix * cell + (iz % 2 ? cell / 2 : 0);
+        const oz = -b.r + iz * cell;
+        if (Math.hypot(ox, oz) > b.r * 0.92) continue;
+        const h = (0.55 + rnd() * 0.75) * S;
+        const m = new THREE.Mesh(cubeGeo, bushMats[(ix * 3 + iz) % 3]);
+        m.scale.set(cell * 0.92, h, cell * 0.92);
+        m.position.set(b.x + ox, h / 2, b.z + oz);
+        m.rotation.y = (ix + iz) * 0.13;
+        m.castShadow = settings.shadows;
+        group.add(m);
+      }
     }
   }
 
@@ -254,14 +309,14 @@ export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
     });
     disposables.push(mineMat);
     const mine = new THREE.Mesh(mineGeo, mineMat);
-    mine.position.set(def.mine.x, 1.2, def.mine.z);
+    mine.position.set(def.mine.x * S, 1.2, def.mine.z * S);
     group.add(mine);
     const padGeo = new THREE.CylinderGeometry(1.8, 2.1, 0.3, 16);
     disposables.push(padGeo);
     const padMat = new THREE.MeshLambertMaterial({ color: 0x2a2f60 });
     disposables.push(padMat);
     const pad = new THREE.Mesh(padGeo, padMat);
-    pad.position.set(def.mine.x, 0.15, def.mine.z);
+    pad.position.set(def.mine.x * S, 0.15, def.mine.z * S);
     group.add(pad);
   }
 
@@ -272,7 +327,7 @@ export function buildMap(scene: THREE.Scene, def: MapDef): BuiltMap {
     const padMat = new THREE.MeshLambertMaterial({ color: s.team === 0 ? 0x1e3a8a : 0x7f1d1d });
     disposables.push(padMat);
     const pad = new THREE.Mesh(padGeo, padMat);
-    pad.position.set(s.x, 0.15, s.z);
+    pad.position.set(s.x * S, 0.15, s.z * S);
     group.add(pad);
   }
 
