@@ -22,7 +22,7 @@ export class NetClient {
   private closed = false;
   private lastPing = 0;
 
-  connect(opts: { name: string; heroId: string; modeId: string; room?: string; token?: string }) {
+  connect(opts: { name: string; heroId: string; modeId: string; room?: string; token?: string; team?: number }) {
     this.closed = false;
     perf.netState = 'connecting';
     let ws: WebSocket;
@@ -44,7 +44,7 @@ export class NetClient {
     ws.onopen = () => {
       const hello: ClientMsg = {
         t: 'hello', name: opts.name, heroId: opts.heroId,
-        modeId: opts.modeId, room: opts.room, token: opts.token,
+        modeId: opts.modeId, room: opts.room, token: opts.token, team: opts.team,
       };
       ws.send(JSON.stringify(hello));
     };

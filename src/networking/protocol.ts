@@ -2,7 +2,7 @@
 export const NET_VERSION = 1;
 
 export type ClientMsg =
-  | { t: 'hello'; name: string; heroId: string; modeId: string; room?: string; token?: string }
+  | { t: 'hello'; name: string; heroId: string; modeId: string; room?: string; token?: string; team?: number }
   | { t: 'register'; name: string; pass: string }
   | { t: 'login'; name: string; pass: string }
   | { t: 'refresh'; token: string }

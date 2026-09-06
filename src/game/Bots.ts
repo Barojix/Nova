@@ -21,7 +21,7 @@ export function botInput(m: Match, f: SimFighter, dt: number): SimInput {
   let best = Infinity;
   const pool = m.modeId === 'training' ? [...enemies, ...dummies] : enemies;
   for (const e of pool) {
-    if (e.aiMode !== 'dummy' && !canSee(m.map.bushes, f.x, f.z, e.x, e.z)) continue;
+    if (e.aiMode !== 'dummy' && !canSee(m.bushes, f.x, f.z, e.x, e.z)) continue;
     const d = dist2d(f.x, f.z, e.x, e.z);
     if (d < best) { best = d; target = e; }
   }
@@ -33,13 +33,21 @@ export function botInput(m: Match, f: SimFighter, dt: number): SimInput {
     f.aiMode = 'fight';
   }
 
-  // starrush/gemgrab: dacă sunt stele/geme libere aproape, ia-le
+  // starrush/gemgrab: dacă sunt stele/geme libere aproape, ia-le;
+  // altfel apropie-te de cea mai apropiată (hărțile mari cer rază mare)
   let starGoal: { x: number; z: number } | null = null;
   if ((m.modeId === 'starrush' || m.modeId === 'gemgrab') && f.aiMode !== 'flee' && f.stars < 6) {
     let bd = 9;
     for (const s of m.stars) {
       const d = dist2d(f.x, f.z, s.x, s.z);
       if (d < bd) { bd = d; starGoal = s; }
+    }
+    if (!starGoal) {
+      let bd2 = Math.max(16, m.half);
+      for (const s of m.stars) {
+        const d = dist2d(f.x, f.z, s.x, s.z);
+        if (d < bd2) { bd2 = d; starGoal = s; }
+      }
     }
   }
 
@@ -76,8 +84,9 @@ export function botInput(m: Match, f: SimFighter, dt: number): SimInput {
       f.aiTx = f.x + pxp * 7 - nx * 1.5;
       f.aiTz = f.z + pzp * 7 - nz * 1.5;
       // ține-l în hartă
-      f.aiTx = Math.max(-15, Math.min(15, f.aiTx));
-      f.aiTz = Math.max(-15, Math.min(15, f.aiTz));
+      const cl = Math.max(15, m.half);
+      f.aiTx = Math.max(-cl, Math.min(cl, f.aiTx));
+      f.aiTz = Math.max(-cl, Math.min(cl, f.aiTz));
       f.stuckT = 1.4;
     } else if (f.aiMode === 'flee') {
       const home = f.team === 0 ? { x: -12, z: 0 } : { x: 12, z: 0 };
@@ -96,8 +105,9 @@ export function botInput(m: Match, f: SimFighter, dt: number): SimInput {
       f.aiTx = f.x + Math.sin(a) * 4;
       f.aiTz = f.z + Math.cos(a) * 4;
     } else {
-      f.aiTx = (Math.random() - 0.5) * 16;
-      f.aiTz = (Math.random() - 0.5) * 16;
+      const wr = Math.max(8, m.half * 0.5); // hoinăreală scalată cu harta
+      f.aiTx = (Math.random() - 0.5) * 2 * wr;
+      f.aiTz = (Math.random() - 0.5) * 2 * wr;
     }
   }
 

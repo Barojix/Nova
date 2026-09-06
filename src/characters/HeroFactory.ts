@@ -152,6 +152,7 @@ export function buildHero(def: HeroDef, skinColor?: number): HeroRig {
 
   // ochi (uman/monstru; robotul are vizor, animalul ochi mari)
   const eyeMat = new THREE.MeshBasicMaterial({ color: 0x141828 });
+  const eyes: THREE.Mesh[] = [];
   if (species !== 'robot') {
     const big = species === 'animal';
     const eyeGeoUse = big ? new THREE.SphereGeometry(0.13, 8, 6) : eyeGeo;
@@ -163,6 +164,7 @@ export function buildHero(def: HeroDef, skinColor?: number): HeroRig {
     const eR = new THREE.Mesh(eyeGeoUse, eyeMat);
     eR.position.set(ex, ey, ez);
     group.add(eL, eR);
+    eyes.push(eL, eR);
   }
 
   // armă (mărime după rază: lunetiștii au țeavă lungă)
@@ -181,6 +183,43 @@ export function buildHero(def: HeroDef, skinColor?: number): HeroRig {
 
   // mărime per erou (tancuri mari, asasini mici)
   group.scale.setScalar(def.sizeMul ?? 1);
+
+  // membre per specie (animate la mers/atac)
+  const arms: THREE.Mesh[] = [];
+  const legs: THREE.Mesh[] = [];
+  const limb = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    group.add(m);
+    return m;
+  };
+  if (species === 'robot') {
+    const armGeo = new THREE.BoxGeometry(0.26, 0.75, 0.3);
+    const legGeo = new THREE.BoxGeometry(0.32, 0.5, 0.36);
+    for (const side of [-1, 1]) {
+      arms.push(limb(armGeo, lam(0x2a2f45), side * 0.68, 0.95, 0));
+      legs.push(limb(legGeo, lam(0x2a2f45), side * 0.26, 0.25, 0));
+    }
+  } else if (species === 'animal') {
+    const legGeo = new THREE.CylinderGeometry(0.14, 0.17, 0.55, 6);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      legs.push(limb(legGeo, lam(main), sx * 0.36, 0.28, sz * 0.42));
+    }
+  } else if (species === 'monstru') {
+    const armGeo = new THREE.CylinderGeometry(0.19, 0.23, 0.85, 7);
+    const legGeo = new THREE.CylinderGeometry(0.2, 0.24, 0.5, 7);
+    for (const side of [-1, 1]) {
+      arms.push(limb(armGeo, lam(main), side * 0.78, 0.95, 0));
+      legs.push(limb(legGeo, lam(main), side * 0.3, 0.25, 0));
+    }
+  } else {
+    const armGeo = new THREE.CylinderGeometry(0.13, 0.15, 0.7, 7);
+    const legGeo = new THREE.CylinderGeometry(0.15, 0.17, 0.6, 7);
+    for (const side of [-1, 1]) {
+      arms.push(limb(armGeo, lam(main), side * 0.72, 1.0, 0));
+      legs.push(limb(legGeo, lam(0x2a2f45), side * 0.25, 0.3, 0));
+    }
+  }
 
   // materiale pentru fade în tufiș
   const fadeMats: { m: THREE.Material; o: number; t: boolean }[] = [];
@@ -262,6 +301,18 @@ export function buildHero(def: HeroDef, skinColor?: number): HeroRig {
       head.position.y = headBaseY + bob * 1.2;
       if (helm) helm.position.y = headBaseY + 0.07 + bob * 1.2;
       group.rotation.x = moving ? 0.12 : 0; // aplecare înainte la fugă
+      // ciclu de mers: picioare/brațe alternativ (trot la animale)
+      const sw = moving ? Math.sin(time * 11) : 0;
+      const amp = species === 'animal' ? 0.7 : 0.55;
+      legs.forEach((leg, i) => {
+        leg.rotation.x = sw * amp * (i % 2 === 0 ? 1 : -1);
+      });
+      arms.forEach((arm, i) => {
+        arm.rotation.x = sw * amp * 0.7 * (i % 2 === 0 ? -1 : 1);
+      });
+      // clipit la ~3.5s
+      const blink = (time % 3.5) < 0.12;
+      for (const e of eyes) e.scale.y = blink ? 0.12 : 1;
       // puls auriu pe inel când super-ul e gata
       if (superR) {
         const p = 0.75 + Math.sin(time * 6) * 0.25;
@@ -276,10 +327,15 @@ export function buildHero(def: HeroDef, skinColor?: number): HeroRig {
       if (attackT > 0) {
         attackT -= dt;
         const k = attackT / 0.22;
-        gun.position.z = 0.35 + (1 - k) * 0.0 - k * 0.35;
+        gun.position.z = 0.35 - k * 0.35;
+        gun.position.y = 1.0 + (1 - k) * 0.15;
         body.scale.set(baseScale.x * (1 + k * 0.08), baseScale.y * (1 - k * 0.06), baseScale.z * (1 + k * 0.08));
+        // brațele se ridică la foc
+        arms.forEach((arm) => { arm.rotation.x = -1.1 * k; });
       } else {
         body.scale.copy(baseScale);
+        gun.position.z = 0.35;
+        gun.position.y = 1.0;
       }
       if (hitT > 0) {
         hitT -= dt;

@@ -152,6 +152,26 @@ html, body {
 .ppips { display: flex; gap: 3px; margin-top: 6px; }
 .ppip { flex: 1; height: 8px; border-radius: 4px; background: #ffffff22; }
 .ppip.on { background: var(--gold); }
+/* ---------- preview 3D erou (pagina transparentă, vitrina în spate) ---------- */
+.page.hero3d { background: transparent; }
+.page.hero3d .page-body {
+  display: flex; gap: 10px; align-items: stretch;
+}
+.page.hero3d .herocol {
+  flex: 1; min-width: 0; overflow-y: auto;
+  background: var(--panel); border: 2px solid var(--line); border-radius: 18px;
+  padding: 12px; touch-action: pan-y;
+}
+.page.hero3d .heromid {
+  flex: 1.1; min-width: 0; pointer-events: none;
+  display: flex; align-items: flex-end; justify-content: center;
+  padding-bottom: 8px;
+}
+@media (orientation: portrait), (max-height: 540px) {
+  .page.hero3d .page-body { flex-direction: column; overflow-y: auto; }
+  .page.hero3d .heromid { display: none; }
+  .page.hero3d .herocol { overflow: visible; }
+}
 .rail-btn { position: relative; }
 .rbadge {
   position: absolute; top: -6px; right: -6px; min-width: 22px; height: 22px;
@@ -428,6 +448,18 @@ html, body {
   background: #060814dd; backdrop-filter: blur(3px); animation: screenIn 0.2s;
 }
 .mm-box { text-align: center; padding: 30px; }
+/* pad-uri echipe în lobby custom */
+.teams { display: flex; gap: 8px; align-items: stretch; margin: 6px 0; }
+.tcol { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.tlabel { font-size: 11px; font-weight: 900; letter-spacing: 1px; }
+.tvs { align-self: center; font-weight: 900; color: var(--dim); font-size: 14px; }
+.tpad {
+  background: var(--panel2); border: 2px solid var(--rc, var(--line));
+  border-radius: 14px; padding: 6px; border-bottom-width: 5px;
+}
+.tpad.host { outline: 2px solid var(--gold); }
+.tface { font-size: 34px; line-height: 1.1; }
+.tname { font-size: 11px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spinner { font-size: 54px; animation: spin 1.2s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .mm-box h2 { letter-spacing: 2px; }

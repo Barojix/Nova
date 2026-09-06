@@ -31,6 +31,7 @@ const HERO_FACE: Record<string, string> = {
 export class UI implements IGameUI {
   private game!: GameManager;
   private selectedMode = 'knockout';
+  private selectedTeam: 1 | 2 | 3 | 4 = 1;
   private playerName: string;
   private mmTimer: number | null = null;
   private perfTimer: number | null = null;
@@ -48,6 +49,8 @@ export class UI implements IGameUI {
     this.playerName =
       localStorage.getItem('nova-name') || `Erou#${Math.floor(1000 + Math.random() * 9000)}`;
     localStorage.setItem('nova-name', this.playerName);
+    const team = Number(localStorage.getItem('nova-team') ?? 1);
+    this.selectedTeam = team === 2 || team === 3 || team === 4 ? (team as 1 | 2 | 3 | 4) : 1;
     // Pe APK nativ: poartă de update forțat ÎNAINTE de orice (inclusiv meniu).
     // Pe web update-ul vine singur cu refresh-ul, deci fără poartă.
     if (Capacitor.isNativePlatform()) {
@@ -386,7 +389,7 @@ export class UI implements IGameUI {
         </div>
         <button class="mode-pick" data-nav="modes">
           <span class="ic">${mode.icon}</span>
-          <span class="inf"><span class="nm">${modeName(mode)}</span><span class="ds">${mode.players} • ${modeTarget(mode)}</span></span>
+          <span class="inf"><span class="nm">${modeName(mode)}${mode.id === 'showdown' && this.selectedTeam > 1 ? ' ' + this.teamLabel().toUpperCase() : ''}</span><span class="ds">${mode.players} • ${modeTarget(mode)}</span></span>
           <span class="go">▸</span>
         </button>
         <div class="play-wrap">
@@ -520,6 +523,11 @@ export class UI implements IGameUI {
     this.root.querySelector('#mm-ov')?.remove();
   }
 
+  private teamLabel(): string {
+    const t = this.selectedTeam;
+    return t === 1 ? T('Solo', 'Solo') : t === 2 ? T('Duo', 'Duo') : t === 3 ? T('Trio', 'Trio') : T('Squad', 'Cvartet');
+  }
+
   private beginMatch(mode?: string, room?: string, map?: string) {
     if (!this.game) {
       this.toast(T('3D unavailable on this device/browser.', '3D indisponibil pe acest dispozitiv/browser.'));
@@ -529,7 +537,7 @@ export class UI implements IGameUI {
     if (mode) this.selectedMode = mode;
     this.root.querySelector('#scr-menu')?.classList.add('hidden');
     // online dacă serverul răspunde — GameManager face fallback automat la boți
-    this.game?.startMatch(this.selectedMode, save.data.selectedHero, Auth.displayName(this.playerName), true, room, map);
+    this.game?.startMatch(this.selectedMode, save.data.selectedHero, Auth.displayName(this.playerName), true, room, map, this.selectedMode === 'showdown' ? this.selectedTeam : undefined);
   }
 
   /** Cumpără + echipează gadget: server când ești logat, local altfel. */
@@ -655,15 +663,28 @@ export class UI implements IGameUI {
     }
     // în cameră: cod, jucători, erou, start (host)
     const meHost = r.host;
+    // pad-uri de echipe: alternează jucătorii pe 2 coloane (ca podiumurile din meci)
+    const teamOf = (idx: number) =>
+      r.mode === 'showdown' ? idx : idx % 2;
+    const teams: { name: string; hero: string; host: boolean }[][] = [[], []];
+    r.players.forEach((p, i) => teams[teamOf(i) % 2].push(p));
+    const pad = (p: { name: string; hero: string; host: boolean }) => {
+      const h = HEROES.find((x) => x.id === p.hero);
+      return `<div class="tpad ${p.host ? 'host' : ''}" style="--rc:${h ? RARITY_COLOR[h.rarity] : 'var(--line)'}">
+        <div class="tface">${HERO_FACE[p.hero] ?? '🦸'}</div>
+        <div class="tname">${p.name}${p.host ? ' 👑' : ''}</div>
+      </div>`;
+    };
     ov.innerHTML = `
       <div class="mm-box" style="max-width:560px">
-        <h2>📻 CAMERA <span style="color:var(--gold)">${r.code}</span></h2>
+        <h2>📻 ${T('ROOM', 'CAMERA')} <span style="color:var(--gold)">${r.code}</span></h2>
         <div class="mm-tips">${MODES.find((m) => m.id === r.mode)?.icon ?? ''} ${r.mode.toUpperCase()} • 🗺️ ${r.mapName}</div>
-        <div class="modes-label">JUCĂTORI (${r.players.length})</div>
-        ${r.players.map((p) => `
-          <div class="bcard ${p.host ? 'sel' : ''}"><div class="face">${HERO_FACE[p.hero] ?? '🦸'}</div>
-          <div class="inf"><div class="nm">${p.name} ${p.host ? '👑' : ''}</div>
-          <div class="tt">${(HEROES.find((h) => h.id === p.hero)?.name ?? p.hero)}</div></div></div>`).join('')}
+        <div class="modes-label">${T('PLAYERS', 'JUCĂTORI')} (${r.players.length})</div>
+        <div class="teams">
+          <div class="tcol team-a"><div class="tlabel" style="color:var(--blue)">● ${T('TEAM BLUE', 'ECHIPA ALBASTRĂ')}</div>${teams[0].map(pad).join('') || `<div class="tt">…</div>`}</div>
+          <div class="tvs">VS</div>
+          <div class="tcol team-b"><div class="tlabel" style="color:var(--red)">● ${T('TEAM RED', 'ECHIPA ROȘIE')}</div>${teams[1].map(pad).join('') || `<div class="tt">…</div>`}</div>
+        </div>
         <div class="modes-label">EROUL TĂU</div>
         <div class="heropick">${HEROES.map((h) => `
           <button class="hpick ${save.data.selectedHero === h.id ? 'sel' : ''}" data-lhero="${h.id}" title="${h.name}">${HERO_FACE[h.id] ?? '🦸'}</button>`).join('')}</div>
@@ -812,11 +833,15 @@ export class UI implements IGameUI {
       title = T('🎮 GAME MODE', '🎮 MOD DE JOC');
       body = MODES.map((m) => {
         const sel = this.selectedMode === m.id;
+        const teamSeg = m.id === 'showdown' ? `
+          <div class="seg teams" id="seg-team">
+            ${([1, 2, 3, 4] as const).map((t) => `<button data-team="${t}" class="${this.selectedTeam === t ? 'sel' : ''}">${t === 1 ? T('Solo', 'Solo') : t === 2 ? T('Duo', 'Duo') : t === 3 ? T('Trio', 'Trio') : T('Squad', 'Cvartet')}</button>`).join('')}
+          </div>` : '';
         return `<div class="bcard modebig ${sel ? 'sel' : ''}">
           <div class="face">${m.icon}</div>
           <div class="inf"><div class="nm">${modeName(m)}</div>
           <div class="tt">${modeDesc(m)}</div>
-          <div class="tt">${m.players} • ${modeTarget(m)}</div></div>
+          <div class="tt">${m.id === 'showdown' ? this.teamLabel() + ' • ' : ''}${m.players} • ${modeTarget(m)}</div>${teamSeg}</div>
           <button class="mbtn ${sel ? 'ghost' : 'green'}" data-mode="${m.id}" ${sel ? 'disabled' : ''}>${sel ? T('PICKED', 'ALES') : T('PICK', 'ALEGE')}</button>
         </div>`;
       }).join('') + `
@@ -876,8 +901,8 @@ export class UI implements IGameUI {
       const pips = Array.from({ length: POWER_MAX }, (_, i) =>
         `<span class="ppip ${i < pw ? 'on' : ''}"></span>`).join('');
       body = `
+        <div class="herocol">
         <div class="herodetail" style="--rc:${RARITY_COLOR[h.rarity]}">
-          <div class="hd-face" style="background:linear-gradient(160deg,#${h.color.toString(16).padStart(6, '0')}66,#${h.color.toString(16).padStart(6, '0')}22)">${HERO_FACE[h.id] ?? '🦸'}</div>
           <div class="hd-side">
             <div class="nm" style="color:${RARITY_COLOR[h.rarity]}">${h.name}</div>
             <div class="tt">${heroTitle(h)}</div>
@@ -894,6 +919,9 @@ export class UI implements IGameUI {
           <div>🏃<b>${h.speed}</b>${T('speed', 'viteză')}</div>
           <div>📏<b>${h.range}</b>${T('range', 'rază')}</div>
         </div>
+        </div>
+        <div class="heromid"><div class="tt" style="text-align:center">👆 ${T('Drag to spin', 'Trage ca să-l învârți')}</div></div>
+        <div class="herocol">
         <div class="bcard"><div class="inf"><div class="nm">⚡ ${T('POWER', 'PUTERE')} ${pw} <span class="tt">/ ${POWER_MAX}</span></div>
         <div class="ppips">${pips}</div></div>
         <button class="mbtn ${maxed ? 'ghost' : 'gold'}" data-upgrade="${h.id}" ${maxed ? 'disabled' : ''}>${maxed ? 'MAX' : `⬆️ 🪙${cost}`}</button></div>
@@ -907,6 +935,7 @@ export class UI implements IGameUI {
         <div style="display:flex;gap:8px;margin-top:10px">
           <button class="mbtn ${sel ? 'ghost' : 'green'}" id="hero-select" style="flex:1" ${sel ? 'disabled' : ''}>${sel ? T('SELECTED', 'SELECTAT') : T('SELECT', 'SELECTEAZĂ')}</button>
           <button class="mbtn gold" id="hero-try" style="flex:1">🎯 ${T('TRY', 'ÎNCEARCĂ')}</button>
+        </div>
         </div>`;
     } else if (which === 'settings') {
       title = T('⚙️ SETTINGS', '⚙️ SETĂRI');
@@ -972,6 +1001,13 @@ export class UI implements IGameUI {
       body = `<div id="friends-page" style="display:contents">${body}</div>`;
     }
     page.innerHTML = `<div class="page-head"><h2>${title}</h2><button class="backbtn" id="pg-back">✕</button></div><div class="page-body">${body}</div>`;
+    if (which === 'hero' && this.heroDetail) {
+      // preview 3D live: eroul apare în vitrina din spatele panourilor
+      page.classList.add('hero3d');
+      try {
+        (this as unknown as { game?: { showShowcase?: (h: string) => void } }).game?.showShowcase?.(this.heroDetail);
+      } catch { /* rămâne emoji */ }
+    }
     this.root.appendChild(page);
     page.querySelector('#pg-back')?.addEventListener('click', () => {
       audio.sfx('click');
@@ -983,6 +1019,16 @@ export class UI implements IGameUI {
         this.selectedMode = (b as HTMLElement).dataset.mode!;
         audio.sfx('click');
         // renderMenu șterge pagina veche; redeschidem selecția cu highlight nou
+        this.renderMenu();
+        this.openPage('modes');
+      });
+    });
+    page.querySelectorAll('[data-team]').forEach((b) => {
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.selectedTeam = Number((b as HTMLElement).dataset.team) as 1 | 2 | 3 | 4;
+        localStorage.setItem('nova-team', String(this.selectedTeam));
+        audio.sfx('click');
         this.renderMenu();
         this.openPage('modes');
       });

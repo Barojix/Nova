@@ -40,6 +40,8 @@ interface Room {
   createdAt: number;
   endedAt: number;
   snapT: number;
+  /** showdown: 1 solo, 2 duo, 3 trio, 4 squad (quick-match grupează pe mărime) */
+  teamSize: number;
   /** cameră custom: fără umplere cu boți, membrii pre-definiți din lobby */
   custom?: { hostId: string; members: Map<string, number> };
 }
@@ -64,8 +66,12 @@ let roomSeq = 1;
 
 const BOT_NAMES = ['Rook', 'Zed', 'Pip', 'Kira', 'Jax', 'Luma', 'Onyx', 'Fizz'];
 
-function roomSize(modeId: string): number {
-  if (modeId === 'showdown') return 10;
+function roomSize(modeId: string, teamSize = 0): number {
+  if (modeId === 'showdown') {
+    if (teamSize === 3) return 9;
+    if (teamSize === 4) return 8;
+    return 10;
+  }
   if (modeId === 'training') return 4;
   return 6;
 }
@@ -164,7 +170,7 @@ function serverBot(m: Match, f: SimFighter, dt: number): SimInput {
   for (const e of m.fighters) {
     if (!e.alive || e.id === f.id) continue;
     if (m.modeId !== 'showdown' && e.team === f.team) continue;
-    if (!canSee(m.map.bushes, f.x, f.z, e.x, e.z)) continue;
+    if (!canSee(m.bushes, f.x, f.z, e.x, e.z)) continue;
     const d = Math.hypot(e.x - f.x, e.z - f.z);
     if (d < best) {
       best = d;
@@ -181,6 +187,17 @@ function serverBot(m: Match, f: SimFighter, dt: number): SimInput {
         bd = d;
         gx = s.x;
         gz = s.z;
+      }
+    }
+    if (gx === null) {
+      let bd2 = Math.max(18, m.half);
+      for (const s of m.stars) {
+        const d = Math.hypot(s.x - f.x, s.z - f.z);
+        if (d < bd2) {
+          bd2 = d;
+          gx = s.x;
+          gz = s.z;
+        }
       }
     }
   }
@@ -227,8 +244,9 @@ function serverBot(m: Match, f: SimFighter, dt: number): SimInput {
     const side = Math.random() < 0.5 ? 1 : -1;
     gx = f.x + -nz * side * 7;
     gz = f.z + nx * side * 7;
-    f.aiTx = Math.max(-15, Math.min(15, gx));
-    f.aiTz = Math.max(-15, Math.min(15, gz));
+    const cl = Math.max(15, m.half);
+    f.aiTx = Math.max(-cl, Math.min(cl, gx));
+    f.aiTz = Math.max(-cl, Math.min(cl, gz));
     gx = f.aiTx;
     gz = f.aiTz;
     f.stuckT = 1.4;
@@ -288,19 +306,21 @@ function snapOf(room: Room): Extract<ServerMsg, { t: 'snap' }> {
   };
 }
 
-function findOrCreateRoom(modeId: string, code?: string): Room {
+function findOrCreateRoom(modeId: string, code?: string, teamSize = 0): Room {
   if (code) {
     const r = rooms.get(code);
-    if (r && !r.match.over && r.players.length < roomSize(r.modeId)) return r;
+    if (r && !r.match.over && r.players.length < roomSize(r.modeId, r.teamSize)) return r;
   }
   for (const r of rooms.values()) {
     if (r.custom) continue; // custom nu primește străini din quick-match
-    if (r.modeId === modeId && !r.match.over && r.players.length < roomSize(modeId)) return r;
+    if (r.modeId !== modeId || (r.teamSize ?? 0) !== teamSize) continue;
+    if (!r.match.over && r.players.length < roomSize(modeId, teamSize)) return r;
   }
   const map = mapById(mapForMode(modeId));
   const room: Room = {
     code: `R${roomSeq++}${Math.floor(Math.random() * 90 + 10)}`,
     modeId,
+    teamSize,
     match: new Match(modeId, map, []),
     players: [],
     createdAt: Date.now(),
@@ -312,8 +332,31 @@ function findOrCreateRoom(modeId: string, code?: string): Room {
   return room;
 }
 
-function teamFor(room: Room): number {
-  if (room.modeId === 'showdown') return room.match.fighters.length;
+function teamFor(room: Room, forHuman = false): number {
+  if (room.modeId === 'showdown') {
+    const size = room.teamSize >= 2 && room.teamSize <= 4 ? room.teamSize : 1;
+    if (size === 1) return room.match.fighters.length;
+    // duo/trio/squad: boții completează echipa omului singur;
+    // oamenii intră în echipe parțiale cu oameni (ca party-urile)
+    const want = roomSize(room.modeId, room.teamSize);
+    const nTeams = Math.max(1, Math.round(want / size));
+    let best = 0, bestScore = Infinity;
+    for (let t = 0; t < nTeams; t++) {
+      const members = room.match.fighters.filter((f) => f.team === t);
+      const humans = members.filter((f) => !f.isBot).length;
+      let score: number;
+      if (forHuman) {
+        score = humans > 0 && members.length < size ? members.length : 1000 + members.length;
+      } else {
+        score = members.length - (humans > 0 && members.length < size ? 10 : 0);
+      }
+      if (score < bestScore) {
+        bestScore = score;
+        best = t;
+      }
+    }
+    return best;
+  }
   const a = room.match.fighters.filter((f) => f.team === 0).length;
   const b = room.match.fighters.filter((f) => f.team === 1).length;
   return a <= b ? 0 : 1;
@@ -347,7 +390,8 @@ wss.on('connection', (ws: WebSocket, req) => {
     }
     if (msg.t === 'hello') {
       const modeId = VALID_MODES.has(msg.modeId) ? msg.modeId : 'knockout';
-      room = findOrCreateRoom(modeId, msg.room);
+      const teamSize = modeId === 'showdown' && (msg.team === 2 || msg.team === 3 || msg.team === 4) ? msg.team : 0;
+      room = findOrCreateRoom(modeId, msg.room, teamSize);
       const m = room.match;
       const account = msg.token ? store.refresh(msg.token) : null;
       if (account) {
@@ -387,9 +431,18 @@ wss.on('connection', (ws: WebSocket, req) => {
       if (gadget === 'furie') def = { ...def, superCooldownHits: Math.max(3, def.superCooldownHits - 2) };
       const maxHp = def.hp + (gadget === 'scut' ? 800 : 0);
       const name = account ? account.name : String(msg.name ?? 'Erou').slice(0, 14) || 'Erou';
-      const team = teamFor(room);
-      // spawn simplu pe jumătatea echipei
-      const sp = team === 0 ? { x: -13, z: 0 } : { x: 13, z: 0 };
+      const team = teamFor(room, true);
+      // spawn pe jumătatea echipei (scalate cu harta); showdown: cerc pe echipe
+      const mapDef = mapById(room.match.map.id);
+      const half = (mapDef.size / 2) * (mapDef.scale ?? 1);
+      const sp = room.modeId === 'showdown'
+        ? (() => {
+            const mates = room.match.fighters.filter((x) => x.team === team).length;
+            const ang = team * 2.39996 + mates * 0.12;
+            const rr = half * 0.72 - mates * 1.1;
+            return { x: Math.cos(ang) * rr, z: Math.sin(ang) * rr };
+          })()
+        : team === 0 ? { x: -half + 4, z: 0 } : { x: half - 4, z: 0 };
       const f: SimFighter = {
         id: uid(), name, heroId, def, team,
         isBot: false, isLocal: false,
@@ -403,18 +456,24 @@ wss.on('connection', (ws: WebSocket, req) => {
       };
       m.fighters.push(f);
       // completează cu boți până la dimensiunea camerei (nu la custom)
-      const want = roomSize(room.modeId);
+      const want = roomSize(room.modeId, room.teamSize);
       if (!room.custom) {
       const botsNow = m.fighters.filter((x) => x.isBot).length;
       const humans = m.fighters.filter((x) => !x.isBot).length;
       for (let i = humans + botsNow; i < want; i++) {
-        const bt = room.modeId === 'showdown' ? i : teamFor(room);
+        const bt = teamFor(room);
         const bh = HERO_IDS[i % HERO_IDS.length];
         const bdef = scaleHeroDef(heroById(bh), 1 + (i % 3));
         const a = (i / want) * Math.PI * 2;
         const bsp = room.modeId === 'showdown'
-          ? { x: Math.cos(a) * 12, z: Math.sin(a) * 12 }
-          : bt === 0 ? { x: -13, z: (i % 3) * 2 - 2 } : { x: 13, z: (i % 3) * 2 - 2 };
+          ? (() => {
+              // coechipierii apar grupați (ca pad-urile offline)
+              const mates = m.fighters.filter((x) => x.team === bt).length;
+              const ang = bt * 2.39996 + mates * 0.12;
+              const rr = half * 0.72 - mates * 1.1;
+              return { x: Math.cos(ang) * rr, z: Math.sin(ang) * rr };
+            })()
+          : bt === 0 ? { x: -half + 4, z: (i % 3) * 2 - 2 } : { x: half - 4, z: (i % 3) * 2 - 2 };
         m.fighters.push({
           id: uid(), name: BOT_NAMES[i % BOT_NAMES.length], heroId: bh, def: bdef, team: bt,
           isBot: true, isLocal: false,
@@ -433,10 +492,14 @@ wss.on('connection', (ws: WebSocket, req) => {
       };
       room.players.push(player);
       // cameră plină cu boți? eliberează un bot pentru om (maxim constant)
-      const maxTotal = roomSize(room.modeId);
+      const maxTotal = roomSize(room.modeId, room.teamSize);
       const bots = m.fighters.filter((x) => x.isBot);
       if (m.fighters.length > maxTotal && bots.length > 0) {
-        const drop = bots[bots.length - 1];
+        // showdown pe echipe: scoate botul din echipa noului venit (echipe echilibrate)
+        const sameTeam = room.modeId === 'showdown' && room.teamSize > 1
+          ? bots.filter((x) => x.team === f.team)
+          : bots;
+        const drop = (sameTeam.length > 0 ? sameTeam : bots)[(sameTeam.length > 0 ? sameTeam : bots).length - 1];
         m.fighters = m.fighters.filter((x) => x.id !== drop.id);
         console.log(`[room] ${room.code}: bot ${drop.name} înlocuit de ${name}`);
       }
